@@ -8,6 +8,13 @@ import sys
 from src.utils.logging import configure_logging
 
 
+def _reveal(window):
+    """Bring the running window back to the front for a second launch attempt."""
+    window.showNormal()
+    window.raise_()
+    window.activateWindow()
+
+
 def main():
     from src.runtime_paths import data_dir
     from src.version import APP_VERSION
@@ -43,11 +50,22 @@ def main():
     from src.settings.manager import SettingsManager
     qt_app = QApplication(sys.argv[:1])
     qt_app.setApplicationName("Koeiro")
+    # One process per data directory: a second launch just reveals the first.
+    # --smoke-test is a headless health check, so it must run even while the app is open.
+    guard = None
+    if not args.smoke_test:
+        from src.utils.single_instance import SingleInstance, instance_key
+        guard = SingleInstance(instance_key(args.data_dir))
+        if not guard.acquire():
+            logging.getLogger("app").info("Another instance is already running; revealing it and exiting")
+            return 0
     from src.gui.splash import show_splash, window_icon
     icon = window_icon()
     if not icon.isNull():
         qt_app.setWindowIcon(icon)
     window = MainWindow(SettingsManager(args.data_dir / "settings.json"))
+    if guard is not None:
+        guard.on_activate(lambda: _reveal(window))
     if not args.no_splash and "PYTEST_CURRENT_TEST" not in os.environ:
         # The first-run guide waits for the splash instead of covering it, so the
         # splash tells the window when the window is actually visible.
