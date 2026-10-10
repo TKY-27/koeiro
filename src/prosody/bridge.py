@@ -59,14 +59,16 @@ class ProsodyBridge:
         if changed:
             self._fade_until=time.monotonic()+.8 if not parameters.enabled else 0.
             log.info('Auto Intonation %s', 'on' if parameters.enabled else 'off')
-        if parameters.enabled:
+        if parameters.enabled or parameters.voice_commands:
             self.load()
 
     def load(self):
+        # Voice commands need the ASR worker even when Auto Intonation is off, so the
+        # text path is started first and the prosody worker stays a separate decision.
+        self.asr.parameters=self.parameters
+        if self.parameters.engine=='text_v3' or self.parameters.voice_commands: self.asr.load()
         if not self.parameters.enabled:
             return
-        self.asr.parameters=self.parameters
-        if self.parameters.engine=='text_v3': self.asr.load()
         with self._lock:
             if self.alive:
                 return

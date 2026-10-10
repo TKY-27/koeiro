@@ -150,3 +150,7 @@ class AudioController:
 
     def set_gate(self, db):
         self.engine.chain.gate.set_threshold(db)
+
+    def set_denoise(self, strength):
+        """Live, in-place: 0 is a pass-through, so switching needs no stream restart."""
+        self.engine.chain.denoise.set_strength(strength)

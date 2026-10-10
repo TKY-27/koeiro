@@ -8,6 +8,7 @@ from src.vc.ring import AudioRing
 from src.vc.wakeup import InputWakeup
 from .performance import ASRTimingStats as TimingStats
 from .client import ASRClient
+from .commands import CommandMatcher
 from .scheduler import update_interval
 
 log=logging.getLogger(__name__)
@@ -33,6 +34,8 @@ class ASRBridge:
         self._load_permitted=True
         self._pending_since=0.
         self.phrase_id=0
+        self.commands=CommandMatcher()
+        self.last_command=None
 
     def set_phrase(self,phrase_id):
         if phrase_id!=self.phrase_id:
@@ -41,12 +44,22 @@ class ASRBridge:
     @property
     def alive(self): return self.thread is not None and self.thread.is_alive()
 
+    @property
+    def _text_wanted(self):
+        """Run the text path for prosody, for voice commands, or for both."""
+        return (self.parameters.enabled and self.parameters.engine=='text_v3') or self.parameters.voice_commands
+
+    def take_command(self):
+        """The latest recognised voice command, consumed once."""
+        command,self.last_command=self.last_command,None
+        return command
+
     def configure(self,p):
         restart=p.asr_threads!=self.parameters.asr_threads or p.asr_model!=self.parameters.asr_model
         self.parameters=p
         if restart:
             self.restart(); return
-        if p.enabled and p.engine=='text_v3': self.load()
+        if (p.enabled and p.engine=='text_v3') or p.voice_commands: self.load()
         else:
             self.context={}  # idle loaded worker retains model until Audio Stop
 
@@ -74,13 +87,13 @@ class ASRBridge:
             self.active=active; self.generation+=1; self.context={}
 
     def submit(self,audio):
-        if not self.active or not self.parameters.enabled or self.parameters.engine!='text_v3' or self.status not in ('Ready','Listening','Degraded'): return
+        if not self.active or not self._text_wanted or self.status not in ('Ready','Listening','Degraded'): return
         if not self.input.write(audio): self.drops+=len(audio)
         if self.input.available>=self.interval_ms*48: self.wakeup.signal()
 
     def current(self,now=None):
         now=time.monotonic() if now is None else now
-        if self.status not in ('Listening','Ready') or not self.active or not self.parameters.enabled or self.parameters.engine!='text_v3': return {}
+        if self.status not in ('Listening','Ready') or not self.active or not self._text_wanted: return {}
         value=dict(self.context)
         age=max(0.,(now-value.get('audio_timestamp',0))*1000)
         if age>=1000 or value.get('phrase_id',self.phrase_id)!=self.phrase_id: return {}
@@ -122,7 +135,7 @@ class ASRBridge:
             deadline=self.load_timeout if self._loading else self.request_timeout
             if self._request_started and time.monotonic()-self._request_started>deadline:
                 self._fail('ASR worker stalled'); return
-            if self.active and self.parameters.enabled and self.parameters.engine=='text_v3' and self.input.available>=self.interval_ms*48:
+            if self.active and self._text_wanted and self.input.available>=self.interval_ms*48:
                 if not self._pending_since: self._pending_since=time.monotonic()
                 self._pending_since=max(self._pending_since,self.last_processed)
                 if not self._loading and time.monotonic()-self._pending_since>self.request_timeout:
@@ -147,7 +160,7 @@ class ASRBridge:
                     self.input.discard(); self.context={}; self._stable_text=''; self._stable_since=0.
                     self._request_started=time.monotonic(); client.request(dict(op='reset')); self._request_started=0.
                     seen=generation
-                if not self.active or not self.parameters.enabled or self.parameters.engine!='text_v3':
+                if not self.active or not self._text_wanted:
                     self.input.discard(); self.context={}; self.status='Ready'; self._stop.wait(.02); continue
                 frames=self.interval_ms*48
                 excess=self.input.available-frames
@@ -177,6 +190,10 @@ class ASRBridge:
                 if signature!=self._stable_text:
                     self._stable_text=signature; self._stable_since=now
                 self.context=ctx if age<1. else {}
+                if self.parameters.voice_commands:
+                    command=self.commands.match(ctx.get('partial_text') or ctx.get('final_text') or '')
+                    if command is not None:
+                        self.last_command=command
                 self.status='Degraded' if age>1. else 'Listening'
                 # Frequency is lowered when tail cost threatens scheduling. Ring
                 # remains bounded; stale text fades to Rule v2 automatically.

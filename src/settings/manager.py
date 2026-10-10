@@ -41,6 +41,9 @@ class AppSettings:
     buffer_size: int = 256
     gain_db: float = 0.0
     noise_gate_db: float = -45.0
+    # Off by default: the spectral stage is a user choice, not the shipped route.
+    denoise: bool = False
+    denoise_strength: float = 0.6
     monitor: bool = False
     monitor_device: dict | None = None
     monitor_volume_db: float = 0.0
@@ -126,6 +129,9 @@ class AppSettings:
             values[field] = value if type(value) is int and value in choices else getattr(defaults, field)
         values["gain_db"] = _number(data.get("gain_db"), 0.0, -20, 20)
         values["noise_gate_db"] = _number(data.get("noise_gate_db"), -45.0, -80, -10)
+        denoise = data.get("denoise")
+        values["denoise"] = denoise if type(denoise) is bool else False
+        values["denoise_strength"] = _number(data.get("denoise_strength"), 0.6, 0, 1)
         monitor = data.get("monitor")
         values["monitor"] = monitor if type(monitor) is bool else False
         values["monitor_device"] = _device(data.get("monitor_device"))

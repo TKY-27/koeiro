@@ -8,7 +8,22 @@ PRESETS = {
         ending_strength=.25, energy_dynamics=.18, min_pitch=-.8, max_pitch=1.2, attack_ms=70., release_ms=110.),
     'Anime Expressive': dict(range_expansion=.65, rise_boost=.45, fall_boost=.20, onset_lift=.50,
         ending_strength=.45, energy_dynamics=.30, min_pitch=-1.2, max_pitch=1.5, attack_ms=50., release_ms=90.),
+    # Emotion presets: the same bounded knobs as the character presets, tuned for a
+    # mood rather than a voice. They reshape the original intonation only, so they
+    # compose with any registered voice and stay a Prosody-only decision.
+    'Calm': dict(range_expansion=.18, rise_boost=.08, fall_boost=.05, onset_lift=.12,
+        ending_strength=.08, energy_dynamics=.06, min_pitch=-.4, max_pitch=.4, attack_ms=100., release_ms=150.),
+    'Gentle': dict(range_expansion=.25, rise_boost=.12, fall_boost=.08, onset_lift=.20,
+        ending_strength=.12, energy_dynamics=.10, min_pitch=-.6, max_pitch=.7, attack_ms=95., release_ms=140.),
+    'Energetic': dict(range_expansion=.55, rise_boost=.40, fall_boost=.16, onset_lift=.45,
+        ending_strength=.35, energy_dynamics=.26, min_pitch=-1.0, max_pitch=1.3, attack_ms=55., release_ms=90.),
+    'Sad': dict(range_expansion=.20, rise_boost=.06, fall_boost=.18, onset_lift=.10,
+        ending_strength=.10, energy_dynamics=.08, min_pitch=-.5, max_pitch=.35, attack_ms=100., release_ms=150.),
 }
+# Which presets are emotions rather than characters, so the UI can group them.
+EMOTION_PRESETS = ('Calm', 'Gentle', 'Energetic', 'Sad')
+CHARACTER_PRESETS = ('Natural', 'Anime Light', 'Anime Expressive')
+
 
 
 @dataclass(frozen=True)
@@ -38,6 +53,9 @@ class ProsodyParameters:
     min_silence_ms: float = 180.
     history_ms: float = 200.
     engine: str = 'rule_v2'
+    # Wake-word voice commands. When on, the ASR path runs even with Auto
+    # Intonation off, so commands like "コエイロ止めて" are recognised.
+    voice_commands: bool = False
     asr_backend: str = 'sherpa_onnx'
     asr_model: str = 'reazon_int8'
     asr_threads: int = 1
@@ -48,7 +66,7 @@ class ProsodyParameters:
     text_strategy: str = 'hybrid'
 
     def __post_init__(self):
-        if any(type(getattr(self,k)) is not bool for k in ('enabled','ending_lift','ending_emphasis')):
+        if any(type(getattr(self,k)) is not bool for k in ('enabled','ending_lift','ending_emphasis','voice_commands')):
             raise ValueError('Prosody switches must be boolean')
         if self.preset not in (*PRESETS, 'Custom'):
             raise ValueError('Invalid prosody preset')
@@ -87,6 +105,7 @@ class ProsodyParameters:
         default=cls(); valid={}
         for name in ('enabled','ending_lift','ending_emphasis'):
             valid[name]=data.get(name) if type(data.get(name)) is bool else getattr(default,name)
+        valid['voice_commands']=data.get('voice_commands') if type(data.get('voice_commands')) is bool else False
         valid['preset']=data.get('preset') if data.get('preset') in (*PRESETS,'Custom') else default.preset
         for name,low,high in cls.bounds():
             value=data.get(name)

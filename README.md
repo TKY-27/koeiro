@@ -45,6 +45,18 @@ GUIとAI推論ワーカーをプロセス分離する設計を採用しており
 - **GUI完結の自動アップデート & 初回ウィザード**
   - 初回起動時のマイク／仮想オーディオ設定ガイドを搭載。
   - 「設定 → アプリの更新」から GitHub Releases の最新版をワンクリックで更新可能。
+- **話し方の演出（抑揚プリセット / ノイズ除去）**
+  - Auto Intonation に**感情・抑揚プリセット**（Calm / Gentle / Energetic / Sad、Anime系）を追加。元の抑揚に補正を加えます。
+  - 定常ノイズ（ファン・サー音）を抑える**ノイズ除去**（スペクトル方式・実験的・既定OFF）。
+- **配信・通話をもっと速く（シーン / ホットキー / 音声コマンド）**
+  - **シーン（設定プロファイル）**: マイク・声・ルート・加工・抑揚を名前を付けて保存し、1クリックで切替。
+  - **A/B 即時切替ホットキー**: `Ctrl+1/2/3` で変換モードを直接、`Ctrl+D` で Original ↔ 直前の変換をトグル（アプリ内ショートカット）。
+  - **音声コマンド（β）**: ウェイクワード「コエイロ」+「止めて」「次の声」などで操作。ローカル日本語ASRを使うため標準ボイス以外で有効。
+- **拡張パック（DLC）対応 & リアルタイム翻訳ボイス（β・骨格）**
+  - 重量級の機能は本体に入れず、`models/packs/<id>/pack.json` の**拡張パック**として追加できます。
+  - 翻訳ボイス（日本語→English など）は翻訳パイプラインの骨格を同梱。**実モデルは各自ダウンロード**します（現状は骨格、詳細は `notes/translation_pack.md`）。
+- **音声合成（TTS・任意）**
+  - 軽量な **Kokoro-82M**（Apache-2.0）を任意で導入可能。`tools/install_tts.py` でモデルを取得します。詳細は「🗣️ 音声合成（TTS・任意）」を参照。
 
 ---
 
@@ -54,7 +66,7 @@ GUIとAI推論ワーカーをプロセス分離する設計を採用しており
 | :--- | :--- |
 | **OS** | Windows 10 / 11, Linux (Ubuntu 22.04+ 推奨) |
 | **Python** | 3.12 系 |
-| **必要容量** | 空き容量 約8GB 以上（作業環境＋AIモデル群） |
+| **必要容量** | 空き容量 約8GB 以上（作業環境＋AIモデル群）<br>（任意のTTSを使う場合は +約150MB） |
 | **外部ツール** | **FFmpeg**（音声読込用）、**git**、**uv** |
 | **Linux 追加依存** | `libportaudio2`, `portaudio19-dev` |
 | **仮想音声デバイス** | 変換音を出力するための仮想オーディオデバイス（任意）<br>・Windows: [VB-CABLE](https://vb-audio.com/Cable/) 等<br>・Linux: `snd-aloop`（ALSA Loopback）等 |
@@ -286,6 +298,38 @@ koeiro/
 
 ---
 
+## 🗣️ 音声合成（TTS・任意 / 拡張パック）
+
+翻訳ボイスなどの読み上げに使う、**軽量な音声合成**を任意で導入できます。モデルは
+同梱せず、各自の環境でダウンロードします（本リポジトリの他のモデルと同じ方針）。
+
+- **Kokoro-82M**（Apache-2.0）× **kokoro-onnx**（MIT）を採用。ライセンス的に問題なく、
+  MIT の Koeiro にそのまま載せられます。重みは同梱せず、ユーザーが取得します。
+- int8量子化で約110MB（＋声ファイル約28MB）。**低スペックPCでも動く軽さ**を優先した選定です。
+- 低スペックでは遅く、実用速度は保証しません（読み上げ用途や GPU 機では快適）。
+
+### 導入手順
+
+```bash
+# 1回だけ。モデル（約140MB）を models/tts/ に取得し、専用venv（vc_models/tts/.venv）を作ります
+.venv/bin/python tools/install_tts.py            # Linux
+.\\.venv\\Scripts\\python tools\\install_tts.py   # Windows
+
+# 疎通確認：短い文を合成して WAV を書き出します（試聴用。処理時間とRTFを表示）
+vc_models/tts/.venv/bin/python tools/verify_tts.py --text "Hello from Koeiro"
+```
+
+- モデルは `models/tts/kokoro/`、実行環境は `vc_models/tts/.venv` に入ります（どちらも git 管理外）。
+- このビルドの kokoro-onnx は **英語（`en-us` / `en-gb`）** に対応します（翻訳ボイスの出力先）。
+  他言語・日本語は別 G2P・別モデルが必要です。
+- リポジトリを日本語パス（例: `D:\ボイチェン`）に置いても動くよう、espeak のデータは
+  ASCII の一時フォルダ（`%TEMP%\koeiro-espeak`）へ自動ミラーします。
+- `tools/verify_tts.py` が出す時間は**モデルのみ**の値で、エンドツーエンド遅延ではありません。
+  聴感は WAV を実際に聴いて確認してください。N150実測: ロード約6秒・2.4秒の音声に約23秒
+  （RTF≈10、低スペックでは実用速度を保証しません）。
+
+---
+
 ## 🧪 スモークテスト & CI
 
 GUIを立ち上げずに基本機能のヘルスチェックを行うことができます：
@@ -308,6 +352,8 @@ Koeiro は以下のオープンソース技術・モデルの成果を活用し�
 - **[MeanVC2](https://github.com/ASLP-lab/MeanVC2)** (ASLP-lab) - ストリーミング・音声変換バックエンド
 - **[LavaSR](https://github.com/LavaSR/LavaSR)** - 音声帯域復元・超解像モデル
 - **[Vocos](https://github.com/gemelo-ai/vocos)** - ニューラルボコーダー
+- **[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)** (hexgrad) - 軽量音声合成（Apache-2.0、任意導入）
+- **[kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)** (thewh1teagle) - Kokoro の ONNX 実行ランタイム（MIT）
 
 
 <p align="center">

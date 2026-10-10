@@ -5,6 +5,7 @@ from src.audio.performance import TimingStats
 from src.vc.models import is_meanvc2
 
 from .base import AudioProcessor
+from .denoise import NoiseSuppressionProcessor
 from .gain import GainProcessor
 from .noise_gate import NoiseGateProcessor
 from .passthrough import PassthroughProcessor
@@ -25,10 +26,13 @@ class SafetyClampProcessor(AudioProcessor):
 
 
 class ProcessorChain(AudioProcessor):
-    def __init__(self, main_processor=None, gain_db=0.0, threshold_db=-45.0):
+    def __init__(self, main_processor=None, gain_db=0.0, threshold_db=-45.0, denoise_strength=0.0):
+        # Denoise first, then the gate, then gain: the gate sees a cleaner signal
+        # and the strength-0 default makes the stage a true pass-through.
+        self.denoise = NoiseSuppressionProcessor(denoise_strength)
         self.gate = NoiseGateProcessor(threshold_db)
         self.gain = GainProcessor(gain_db)
-        self.pre_processors = (self.gate, self.gain)
+        self.pre_processors = (self.denoise, self.gate, self.gain)
         self.main_processor = main_processor if main_processor is not None else PassthroughProcessor()
         self.post_processors = (SafetyClampProcessor(),)
         self._stages = (*self.pre_processors, self.main_processor, *self.post_processors)

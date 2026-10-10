@@ -11,7 +11,7 @@ import time
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFormLayout, QHBoxLayout,
-                               QCheckBox, QFrame, QLabel, QLayout, QMainWindow, QMessageBox,
+                               QCheckBox, QFrame, QLabel, QLayout, QLineEdit, QMainWindow, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSlider,
                                QVBoxLayout, QWidget, QDoubleSpinBox, QSpinBox)
 
@@ -20,6 +20,7 @@ from src.audio.devices import choose_device, is_virtual
 from src.audio.engine import AudioEngine, EngineConfig
 from src.audio.meters import amplitude_to_db
 from src.settings.manager import BUFFERS, SAMPLE_RATES
+from src.settings.scenes import SceneStore
 from src.presence import PresenceClient
 from src.processors.chain import ProcessorChain
 from src.processors.dsp_parameters import DSPParameters
@@ -246,6 +247,7 @@ class MainWindow(QMainWindow):
         settings_layout = self.pages['settings'][1]
         self._build_update_section(settings_layout)
         self._build_discord_section(settings_layout)
+        self._build_scenes_section(settings_layout)
         self._build_prosody_section(settings_layout)
         self._build_dsp_section(settings_layout)
         self._build_ai_details(settings_layout)
@@ -263,6 +265,19 @@ class MainWindow(QMainWindow):
         self.gate.valueChanged.connect(self._gate_changed)
         self._gain_changed(self.gain.value())
         self._gate_changed(self.gate.value())
+        # Optional spectral noise reduction, applied live like the gate. It is off
+        # by default because it reshapes the voice; the strength is a user choice.
+        self.denoise_toggle = QCheckBox('ノイズ除去（定常ノイズを抑える・実験的）')
+        self.denoise_toggle.setChecked(self.settings.denoise)
+        self.denoise_toggle.setToolTip('ファン・サー音などの定常ノイズを抑えます。\n'
+                                       '声質が変わり得るため既定はOFF。停止中でも切替できます。')
+        self.denoise_toggle.toggled.connect(self._denoise_changed)
+        settings_layout.addWidget(self.denoise_toggle)
+        self.denoise_strength, self.denoise_strength_label = self._slider(
+            settings_layout, 'ノイズ除去の強さ', 0, 100, round(self.settings.denoise_strength * 100))
+        self.denoise_strength.valueChanged.connect(self._denoise_changed)
+        self.denoise_strength_label.setText(f'{self.denoise_strength.value()/100:.2f}')
+        self._denoise_changed()
         options = QFormLayout()
         self.rate = QComboBox()
         for rate in SAMPLE_RATES:
@@ -423,6 +438,7 @@ class MainWindow(QMainWindow):
         self._guide_highlight_timer.setInterval(2800)
         self._guide_highlight_timer.timeout.connect(self._clear_highlight)
         self._show_page('home')
+        self._build_hotkeys()
         self._schedule_first_run_tutorial(splash_played=False)
         QTimer.singleShot(8000, self._auto_update_check)
 
@@ -677,6 +693,15 @@ class MainWindow(QMainWindow):
         self.prosody_on=QCheckBox('Auto Intonation · AI Voiceのみ')
         self.prosody_on.setChecked(p.enabled)
         layout.addWidget(self.prosody_on)
+        self.voice_commands=QCheckBox('音声コマンド（「コエイロ止めて」など・β）')
+        self.voice_commands.setChecked(p.voice_commands)
+        self.voice_commands.setToolTip('ウェイクワード「コエイロ」に続けて指示すると操作できます。\n'
+                                       'ローカル日本語ASRを使うため、標準ボイス以外で有効です。')
+        layout.addWidget(self.voice_commands)
+        self.voice_command_status=QLabel('')
+        self.voice_command_status.setObjectName('muted')
+        self.voice_command_status.setWordWrap(True)
+        layout.addWidget(self.voice_command_status)
         self.prosody_engine=QComboBox()
         for label,value in [('Off','off'),('Rule v2','rule_v2'),('Text-Aware v3 · β','text_v3')]:
             self.prosody_engine.addItem(label,value)
@@ -760,7 +785,7 @@ class MainWindow(QMainWindow):
         self.text_strategy.currentIndexChanged.connect(self._prosody_changed)
         self.log_transcripts.toggled.connect(self._prosody_changed)
         self.prosody_preset.currentTextChanged.connect(self._prosody_preset_changed)
-        for widget in (self.prosody_on,self.ending_lift):
+        for widget in (self.prosody_on,self.ending_lift,self.voice_commands):
             widget.toggled.connect(self._prosody_changed)
         for widget in (self.anime_amount,self.prosody_range,self.prosody_energy):
             widget.valueChanged.connect(self._prosody_changed)
@@ -771,7 +796,8 @@ class MainWindow(QMainWindow):
         return ProsodyParameters(enabled=self.prosody_on.isChecked() and not is_meanvc2(self.ai_model.currentData()),preset=self.prosody_preset.currentText(),
             amount=self.anime_amount.value(),pitch_range=self.prosody_range.value(),energy=self.prosody_energy.value(),
             ending_emphasis=self.ending_lift.isChecked(),update_ms=self.prosody_update.currentData(),
-            engine=self.prosody_engine.currentData(),text_influence=self.text_influence.value(),
+            engine=self.prosody_engine.currentData(),voice_commands=self.voice_commands.isChecked(),
+            text_influence=self.text_influence.value(),
             transcript_logging=self.log_transcripts.isChecked(),asr_threads=self.asr_threads.value(),
             asr_update_ms=self.asr_update.currentData(),asr_window_ms=self.asr_window.currentData(),
             text_strategy=self.text_strategy.currentData(),**values)
@@ -2067,6 +2093,248 @@ class MainWindow(QMainWindow):
         self.gate_label.setText(f"{value / 10:.1f} dB")
         self.controller.set_gate(value / 10)
 
+    def _denoise_changed(self, *_):
+        """Live: 0 is a pass-through, so the stream never needs a restart."""
+        if not hasattr(self, 'denoise_toggle'):
+            return
+        if hasattr(self, 'denoise_strength_label'):
+            self.denoise_strength_label.setText(f'{self.denoise_strength.value()/100:.2f}')
+        enabled = self.denoise_toggle.isChecked()
+        self.denoise_strength.setEnabled(enabled)
+        self.denoise_strength_label.setEnabled(enabled)
+        if not self._closing:
+            self.controller.set_denoise(self.denoise_strength.value()/100 if enabled else 0.0)
+
+    def _build_hotkeys(self):
+        """In-app shortcuts for instant route switching.
+
+        These are *application* shortcuts: they fire while any Koeiro window has focus,
+        not system-wide. The app deliberately installs no OS keyboard hook, so a
+        keystroke pressed while a game or Discord has focus is not captured. Ctrl+1/2/3
+        pick a route outright; Ctrl+D flips between Original and the last real route,
+        which is the A/B listen that a voice change actually needs.
+        """
+        from PySide6.QtGui import QKeySequence, QShortcut
+        self._ab_last = 'ai_voice'
+        bindings = (('Ctrl+1', lambda: self._select_mode('original')),
+                    ('Ctrl+2', lambda: self._select_mode('female_dsp')),
+                    ('Ctrl+3', lambda: self._select_mode('ai_voice')),
+                    ('Ctrl+D', self._ab_toggle))
+        self.hotkeys = {}
+        for sequence, handler in bindings:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            shortcut.activated.connect(handler)
+            self.hotkeys[sequence] = shortcut
+
+    def _select_mode(self, key):
+        """Route switch used by the shortcuts; mirrors the mode combo the user drives."""
+        if self._pending or self._closing:
+            return
+        index = self.mode.findData(key)
+        if index < 0:
+            return
+        if key != 'original':
+            self._ab_last = key
+        if index != self.mode.currentIndex():
+            self.mode.setCurrentIndex(index)
+
+    def _ab_toggle(self):
+        """Flip between Original and the last non-Original route."""
+        if self._pending or self._closing:
+            return
+        current = self.mode.currentData()
+        if current == 'original':
+            self._select_mode(self._ab_last)
+        else:
+            self._ab_last = current
+            self._select_mode('original')
+
+    def _drain_voice_command(self):
+        """Run a recognised wake-word command, if any. Cheap when the feature is off."""
+        if (self.router is None or not hasattr(self, 'voice_commands')
+                or not self.voice_commands.isChecked()):
+            return
+        command = self.router.ai.bridge.prosody.asr.take_command()
+        if command is not None:
+            self._run_voice_command(command)
+
+    def _run_voice_command(self, command):
+        """Act on a voice command by reusing the controls the user already drives."""
+        from src.asr.commands import label
+        log.info('Voice command: %s (%s)', command.kind, command.phrase)
+        kind = command.kind
+        if kind == 'stop':
+            self._stop()
+        elif kind == 'start':
+            self._start()
+        elif kind in ('next_voice', 'prev_voice'):
+            self._cycle_voice(1 if kind == 'next_voice' else -1)
+        elif kind == 'original':
+            self._select_mode('original')
+        elif kind == 'ai_voice':
+            self._select_mode('ai_voice')
+        else:
+            return
+        if hasattr(self, 'voice_command_status'):
+            self.voice_command_status.setText(f'音声コマンド: {label(command)}')
+
+    def _cycle_voice(self, step):
+        count = self.voice_quick.count()
+        if count <= 1:
+            return
+        self.voice_quick.setCurrentIndex((self.voice_quick.currentIndex() + step) % count)
+
+    # -- scenes (named settings profiles) --------------------------------------
+
+    def _scene_store(self):
+        return SceneStore(self.manager.path.with_name('scenes.json'))
+
+    def _build_scenes_section(self, layout):
+        column = self._section(layout, 'シーン（設定プロファイル）')
+        note = QLabel('いまの設定（マイク・声・ルート・音の加工・抑揚）を名前を付けて保存し、'
+                      'あとで1クリックで戻せます。変換中は切り替えできません。')
+        note.setObjectName('muted')
+        note.setWordWrap(True)
+        column.addWidget(note)
+        self.scene_name = QLineEdit()
+        self.scene_name.setPlaceholderText('例：配信用 / 通話用 / ささやき')
+        self.scene_name.setMaxLength(40)
+        column.addWidget(self.scene_name)
+        self.scene_combo = QComboBox()
+        column.addWidget(self._labelled_row('保存済みのシーン', self.scene_combo))
+        row = QHBoxLayout()
+        self.scene_save = QPushButton('現在の設定を保存')
+        self.scene_load = QPushButton('読み込む')
+        self.scene_delete = QPushButton('削除')
+        self.scene_save.clicked.connect(self._save_scene)
+        self.scene_load.clicked.connect(self._load_scene)
+        self.scene_delete.clicked.connect(self._delete_scene)
+        for button in (self.scene_save, self.scene_load, self.scene_delete):
+            button.setMinimumHeight(34)
+            row.addWidget(button)
+        column.addLayout(row)
+        self.scene_status = QLabel('')
+        self.scene_status.setObjectName('muted')
+        self.scene_status.setWordWrap(True)
+        column.addWidget(self.scene_status)
+        self._refresh_scenes()
+
+    def _refresh_scenes(self):
+        names = self._scene_store().names()
+        current = self.scene_combo.currentText()
+        self.scene_combo.blockSignals(True)
+        self.scene_combo.clear()
+        self.scene_combo.addItems(names)
+        if current in names:
+            self.scene_combo.setCurrentText(current)
+        self.scene_combo.blockSignals(False)
+        self.scene_status.setText(f'{len(names)} 件のシーン' if names else 'まだシーンがありません')
+
+    def _save_scene(self):
+        self._capture_settings()
+        try:
+            ok = self._scene_store().save(self.scene_name.text(), self.settings)
+        except ValueError as error:
+            self.scene_status.setText(f'保存できません：{error}')
+            return
+        self.scene_status.setText('保存しました' if ok else '保存に失敗しました')
+        self._refresh_scenes()
+
+    def _load_scene(self):
+        name = self.scene_combo.currentText()
+        if not name:
+            self.scene_status.setText('読み込むシーンを選んでください')
+            return
+        try:
+            scene = self._scene_store().load(name)
+        except KeyError:
+            self.scene_status.setText('そのシーンはありません')
+            self._refresh_scenes()
+            return
+        if self._apply_scene(scene):
+            self.scene_status.setText(f'「{name}」を適用しました')
+        else:
+            self.scene_status.setText('変換中はシーンを切り替えられません。停止してください。')
+
+    def _delete_scene(self):
+        name = self.scene_combo.currentText()
+        if not name:
+            return
+        self.scene_status.setText('削除しました' if self._scene_store().delete(name)
+                                  else 'そのシーンはありません')
+        self._refresh_scenes()
+
+    @staticmethod
+    def _select_device(combo, identity):
+        """Select the saved device, leaving the current choice when it is absent."""
+        if not identity:
+            return
+        for index in range(combo.count()):
+            item = combo.itemData(index)
+            if item is not None and item.identity == identity:
+                combo.setCurrentIndex(index)
+                return
+
+    def _apply_scene(self, settings):
+        """Adopt a saved scene by driving the same widgets the user would.
+
+        Values travel the existing signal paths, so the worker/controller update the
+        way they do for a manual edit instead of through a second apply path that
+        could drift from them. Only usable while stopped.
+        """
+        if self._pending or self._closing or self.controller.engine.running:
+            return False
+        self.settings = settings
+        self._select_device(self.input_device, settings.input_device)
+        self._select_device(self.output_device, settings.output_device)
+        self._select_device(self.monitor_device, settings.monitor_device)
+        self.monitor_toggle.setChecked(settings.monitor)
+        self.monitor_volume.setValue(round(settings.monitor_volume_db * 10))
+        self.rate.setCurrentIndex(self.rate.findData(settings.sample_rate))
+        self.buffer.setCurrentIndex(self.buffer.findData(settings.buffer_size))
+        self.gain.setValue(round(settings.gain_db * 10))
+        self.gate.setValue(round(settings.noise_gate_db * 10))
+        self.denoise_toggle.setChecked(settings.denoise)
+        self.denoise_strength.setValue(round(settings.denoise_strength * 100))
+        voice_index = self.ai_model.findData(settings.ai_model)
+        if voice_index >= 0:
+            self.ai_model.setCurrentIndex(voice_index)
+        self._apply_dsp_widgets(settings.dsp_parameters(), settings.preset)
+        self._apply_prosody_widgets(settings.prosody_parameters())
+        self.mode.setCurrentIndex(self.mode.findData(settings.voice_mode))
+        self._ai_structure_changed()
+        self._route_changed()
+        return True
+
+    def _apply_prosody_widgets(self, p):
+        widgets = (self.prosody_on, self.voice_commands, self.prosody_engine, self.prosody_preset,
+                   self.anime_amount, self.prosody_range, self.prosody_energy, self.ending_lift,
+                   self.prosody_update, self.text_influence, self.asr_threads, self.asr_update,
+                   self.asr_window, self.text_strategy, self.log_transcripts)
+        for widget in widgets:
+            widget.blockSignals(True)
+        self.prosody_on.setChecked(p.enabled)
+        self.voice_commands.setChecked(p.voice_commands)
+        self.prosody_engine.setCurrentIndex(self.prosody_engine.findData(p.engine))
+        self.prosody_preset.setCurrentText(p.preset)
+        self.anime_amount.setValue(round(p.amount))
+        self.prosody_range.setValue(round(p.pitch_range))
+        self.prosody_energy.setValue(round(p.energy))
+        self.ending_lift.setChecked(p.ending_emphasis)
+        self.prosody_update.setCurrentIndex(self.prosody_update.findData(int(p.update_ms)))
+        for name, widget in self.prosody_advanced.items():
+            widget.setValue(getattr(p, name))
+        self.text_influence.setValue(p.text_influence)
+        self.asr_threads.setValue(p.asr_threads)
+        self.asr_update.setCurrentIndex(self.asr_update.findData(p.asr_update_ms))
+        self.asr_window.setCurrentIndex(self.asr_window.findData(p.asr_window_ms))
+        self.text_strategy.setCurrentIndex(self.text_strategy.findData(p.text_strategy))
+        self.log_transcripts.setChecked(p.transcript_logging)
+        for widget in widgets:
+            widget.blockSignals(False)
+        self._prosody_changed()
+
     def _refresh_devices(self):
         self._capture_settings()
         self._pending = True
@@ -2280,6 +2548,7 @@ class MainWindow(QMainWindow):
             # Cheap when nothing changed: the worker compares the snapshot itself, so
             # this each 30 Hz frame never sends anything Discord did not need.
             self.presence.update(self._presence_state())
+        self._drain_voice_command()
         dsp_stats = self.controller.engine.chain.performance.snapshot()
         callback_stats = self.controller.engine.performance.snapshot()
         if self.router:
@@ -2473,6 +2742,9 @@ class MainWindow(QMainWindow):
                               else self.settings.discord_presence),
             sample_rate=self.rate.currentData(), buffer_size=self.buffer.currentData(),
             gain_db=self.gain.value() / 10, noise_gate_db=self.gate.value() / 10,
+            denoise=self.denoise_toggle.isChecked() if hasattr(self, 'denoise_toggle') else self.settings.denoise,
+            denoise_strength=(self.denoise_strength.value() / 100 if hasattr(self, 'denoise_strength')
+                              else self.settings.denoise_strength),
             window_size=(self.width(), self.height()),
             window_position=(self.x(), self.y()))
         parameters = self._dsp_parameters()

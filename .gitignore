@@ -77,3 +77,6 @@ validation/v091/gui-stress.png
 validation/v092/gui-stress.png
 # Scratch commit-message files never belong in the tree
 commit-message.txt
+
+# Text-to-speech: downloaded by tools/install_tts.py, never committed.
+models/tts/
