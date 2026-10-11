@@ -27,7 +27,7 @@ from src.settings.manager import BUFFERS, SAMPLE_RATES
 from src.settings.scenes import SceneStore
 from src.presence import PresenceClient
 from src.processors.chain import ProcessorChain
-from src.processors.dsp_parameters import DSPParameters
+from src.processors.dsp_parameters import DSPParameters, MODES
 from src.processors.female_dsp import FemaleDSPProcessor
 from src.processors.voice_router import VoiceRouter
 from src.processors.ai_voice import AIVoiceProcessor
@@ -82,6 +82,14 @@ class MainWindow(QMainWindow):
                 self.router.ai.bridge.parameters = self.settings.ai_parameters()
             # An injected chain owns its pre-processors; use its stage when it has one.
             self.whisper = getattr(controller.engine.chain, 'whisper', None)
+        # Live translation voice: mic JA -> EN speech to the output device. The
+        # driver owns its ASR worker and thread; the router plays finished
+        # utterances. Armed only from the translate route (see
+        # _update_translation_driver), so it never spends RAM unasked.
+        from src.translate.live import TranslationDriver
+        playback = self.router.translate_playback if self.router is not None else None
+        self.translate_driver = TranslationDriver(self.controller.engine, playback)
+        self._translate_join_pending = False
         self._revision = -1
         self._pending = False
         self._pending_request = 0
@@ -422,10 +430,12 @@ class MainWindow(QMainWindow):
         self.mode.addItem('Original / 変換なし', 'original')
         self.mode.addItem('Female DSP / 軽い加工', 'female_dsp')
         self.mode.addItem('AI Voice / 声の変換', 'ai_voice')
+        self.mode.addItem('同時通訳 / English voice', 'translate')
         self.mode.setToolTip('声の変換方法を選びます。\n'
                           'Original: 変換しません\n'
                           'Female DSP: 軽い加工（CPUが軽い）\n'
-                          'AI Voice: 選んだ声で完全に別の声に変換')
+                          'AI Voice: 選んだ声で完全に別の声に変換\n'
+                          '同時通訳: 日本語の発話を英語音声に変えて出力します（実験室②が必要）')
         self.mode.setMinimumHeight(34)
         mode_row.addRow('変換モード', self.mode)
         self.voice_quick = QComboBox()
@@ -1006,8 +1016,10 @@ class MainWindow(QMainWindow):
         self.translate_on = QCheckBox('使う')
         column = self._lab_feature(
             layout, 'translate', '🌐 ② 同時通訳ボイス（翻訳して喋る）',
-            '入力した文を合成してWAVに書き出します（試聴は各自で）。翻訳モデルは拡張パック側の枠で、'
-            '未導入の今は入力文をそのまま読み上げます。TTSは専用環境 vc_models/tts/.venv で動きます。',
+            '入力した文を合成してWAVに書き出します（試聴は各自で）。変換モードで'
+            '「同時通訳」を選ぶと、話した日本語が英語音声になって出力先（Discordなど）'
+            'へ流れます。翻訳モデルは拡張パック側の枠で、未導入の今は入力文をそのまま'
+            '読み上げます。TTSは専用環境 vc_models/tts/.venv で動きます。',
             self.translate_on)
         form = QFormLayout()
         self.translate_provider = QComboBox()
@@ -1033,6 +1045,11 @@ class MainWindow(QMainWindow):
         self.translate_test_button.clicked.connect(self._lab_translate_test)
         column.addWidget(self.translate_test_button)
         self.translate_status = self._lab_status(column, '未実行')
+        # Live route: speak Japanese and the English voice goes to the output
+        # device (Discord). Same pipeline as the WAV test above, but the
+        # translate route plays it instead of writing a file. Sentences, not
+        # crosstalk: synthesis takes seconds per line on a weak CPU.
+        self.translate_live_status = self._lab_status(column, '同時通訳ルートを選んでStartするとここに状態が出ます')
         # The switch and the provider are the same decision, so they follow each other.
         self.translate_on.setChecked(lab.translation_provider != 'off')
         self.translate_on.toggled.connect(self._translate_toggled)
@@ -1235,6 +1252,91 @@ class MainWindow(QMainWindow):
             if message is None:
                 continue
             label.setText(message if not message.startswith('ERROR: ') else message[7:])
+
+    def _update_translation_driver(self):
+        """Arm the live translation voice from the route, or park it.
+
+        The driver (its ASR worker, thread and TTS jobs) exists only while the
+        translate route runs with the lab master on and a synthesizer chosen.
+        Stopping never blocks the GUI: the joins ride a background job.
+        """
+        driver = getattr(self, 'translate_driver', None)
+        if driver is None or not hasattr(self, 'translate_on'):
+            return
+        lab = self._capture_lab()
+        armed = (self.controller.engine.running
+                 and self.mode.currentData() == 'translate'
+                 and self.lab_enabled.isChecked()
+                 and lab.translation_provider != 'off')
+        if armed and not driver.alive:
+            self._translate_join_pending = False
+            self._start_translation_driver(lab)
+        elif not armed and driver.alive and not self._translate_join_pending:
+            self._translate_join_pending = True
+            driver.begin_stop()
+            self.files.submit('translate_join', driver.join)
+        self._render_translation_status(driver.status, armed, lab)
+
+    def _start_translation_driver(self, lab):
+        """Resolve the ASR/MT/TTS pieces and hand them to the driver thread."""
+        from src.runtime_paths import model_root
+        from src.translate.providers import build_pipeline
+        from src.tts import provider as tts_provider
+        driver = self.translate_driver
+        root = model_root()
+        import importlib.util
+        from src.tts.client import worker_available
+        if not tts_provider.available(root) or (
+                importlib.util.find_spec('kokoro_onnx') is None
+                and not worker_available(root)):
+            self.translate_live_status.setText(
+                'TTSが未導入のため同時通訳は動けません: tools/install_tts.py を実行してください。')
+            return
+        reference = None
+        if lab.translate_preserve:
+            folder = self._voice_folder(lab.translate_reference)
+            if folder is not None and (folder / 'reference.wav').is_file():
+                try:
+                    _rate, reference = lab_actions.load_wav(folder / 'reference.wav', 48000)
+                except ValueError:
+                    reference = None
+        voice = lab.translate_voice or 'af_heart'
+
+        def build():
+            pipeline, _status = build_pipeline(root, lab.translation_provider, voice,
+                                               reference, 48000, None, 'ja', 'en')
+            return pipeline
+
+        try:
+            asr_params = replace(self.settings.prosody_parameters(), voice_commands=True)
+        except ValueError:
+            asr_params = None
+        if asr_params is None:
+            return
+        driver.start(asr_params, build, voice=voice)
+        self._render_translation_status(driver.status, True, lab)
+
+    def _render_translation_status(self, status, armed, lab=None):
+        """One honest line about the live pipeline, or what it still needs."""
+        if not armed:
+            if self.mode.currentData() == 'translate' and not self.controller.engine.running:
+                self.translate_live_status.setText('Startを押すと同時通訳が始まります（文単位・遅延大）。')
+            elif self.mode.currentData() == 'translate' and not self.lab_enabled.isChecked():
+                self.translate_live_status.setText('「実験機能有効」をONにすると同時通訳が動きます。')
+            elif self.mode.currentData() == 'translate':
+                self.translate_live_status.setText('②で合成（Kokoro）を選ぶと同時通訳が動きます。')
+            return
+        heard, said = status.get('heard', ''), status.get('said', '')
+        if status.get('error'):
+            self.translate_live_status.setText(f'同時通訳エラー: {status["error"]}')
+        elif said:
+            self.translate_live_status.setText(
+                f'「{heard}」→「{said}」· 待機 {status.get("queued_seconds", 0)}秒')
+        elif heard:
+            self.translate_live_status.setText(f'「{heard}」を翻訳・合成しています…')
+        else:
+            self.translate_live_status.setText(
+                f'聞き取っています（ASR: {status.get("asr", "?")}）…文を言い切ってください。')
 
     def _lab_governor_tick(self):
         """Read the callback counters and report. Snapshot only; no callback work."""
@@ -1809,7 +1911,7 @@ class MainWindow(QMainWindow):
                 shutil.rmtree(staging, ignore_errors=True)
             package = app_update.extract_package(target, staging)
             info = app_update.read_package_release(package)
-            if str(info.get("version")) != tag:
+            if not app_update._version_matches(info.get("version"), tag):
                 return {"error": "更新パッケージが壊れています"}
             try:
                 target.unlink()
@@ -2145,7 +2247,8 @@ class MainWindow(QMainWindow):
         self._publish_dsp()
 
     def _dsp_parameters(self):
-        return DSPParameters(mode='female_dsp' if self.mode.currentData() == 'ai_voice' else self.mode.currentData(), pitch=self.pitch.value()/10,
+        route = self.mode.currentData()
+        return DSPParameters(mode='female_dsp' if route == 'ai_voice' else (route if route in MODES else 'original'), pitch=self.pitch.value()/10,
             formant=self.formant.value()/10, brightness=self.brightness.value(),
             low_cut=self.low_cut.isChecked(), limiter=self.limiter.isChecked(),
             wet=self.wet.value()/100, quality=self.quality.currentData())
@@ -3178,6 +3281,7 @@ class MainWindow(QMainWindow):
         self._show_presence_status()
         self._lab_results()
         self._lab_governor_tick()
+        self._update_translation_driver()
         engine = self.controller.engine
         player = engine.monitor_player
         if player is not None and player.running:
@@ -3337,6 +3441,8 @@ class MainWindow(QMainWindow):
             return 'Original（無変換）'
         if mode == 'female_dsp':
             return 'Female DSP'
+        if mode == 'translate':
+            return '同時通訳（English）'
         if mode != 'ai_voice':
             return '停止中'
         model = self.ai_model.currentText()

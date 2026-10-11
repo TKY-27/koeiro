@@ -136,6 +136,20 @@ def test_the_finish_card_conditions_converted_output_only(ai_window):
     assert window.controller.engine.chain.finish.enabled is False
 
 
+def test_the_translate_route_is_selectable_and_described(ai_window):
+    """The 4th route names itself and leaves the DSP parameters valid."""
+    app, window, backend, bridge = ai_window
+    assert window.mode.findData('translate') >= 0
+    window.mode.setCurrentIndex(window.mode.findData('translate'))
+    app.processEvents()
+    assert window._describe_output() == '同時通訳（English）'
+    assert window._dsp_parameters().mode == 'original'
+    # Parked while stopped: the driver never spends an ASR worker unasked.
+    window._tick()
+    assert not window.translate_driver.alive
+    assert 'Start' in window.translate_live_status.text()
+
+
 def test_the_stage_names_the_live_voice_and_route(ai_window):
     """The stage says what Start will use (or is using), not just the drawer card."""
     app, window, backend, bridge = ai_window

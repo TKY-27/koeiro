@@ -4,15 +4,20 @@ from dataclasses import replace
 from .base import AudioProcessor
 from .female_dsp import FemaleDSPProcessor
 from .ai_voice import AIVoiceProcessor
+from .translate_playback import TranslatePlayback
 from src.vc.config import VOICE_MODES
 
 
 class VoiceRouter(AudioProcessor):
-    def __init__(self, dsp=None, ai=None, mode='original'):
+    def __init__(self, dsp=None, ai=None, mode='original', translate=None):
         self.dsp = dsp or FemaleDSPProcessor()
         if isinstance(self.dsp,FemaleDSPProcessor):
             self.dsp.set_parameters(replace(self.dsp.parameters,mode='female_dsp'))
         self.ai = ai or AIVoiceProcessor()
+        # Spoken translations, queued whole by the control side (see
+        # src.translate.live). Silence until the first one arrives: the
+        # untranslated microphone must never leak to a translation listener.
+        self.translate_playback = translate or TranslatePlayback()
         if mode not in VOICE_MODES:
             raise ValueError('Invalid voice mode')
         self.mode = mode
@@ -54,6 +59,7 @@ class VoiceRouter(AudioProcessor):
         self._current = self._target = 'original'
         self._last = 0.0
         self._dsp_preroll = 0
+        self.translate_playback.reset()
         if self.mode == 'ai_voice':
             self.select(self.mode)
             # Complete the start epoch on the control thread before the first
@@ -64,9 +70,11 @@ class VoiceRouter(AudioProcessor):
     def reset(self):
         self.dsp.reset()
         self.ai.reset()
+        self.translate_playback.reset()
 
     def stop(self):
         self.ai.stop()
+        self.translate_playback.reset()
 
     @property
     def algorithmic_latency_samples(self):
@@ -78,6 +86,9 @@ class VoiceRouter(AudioProcessor):
             return self.dsp.process(target, sample_rate)
         if mode == 'ai_voice':
             return self.ai.process(target, sample_rate)
+        if mode == 'translate':
+            self.translate_playback.render_into(target.reshape(-1))
+            return target
         return target
 
     def process(self, audio, sample_rate):

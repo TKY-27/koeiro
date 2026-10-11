@@ -49,6 +49,10 @@ class AudioEngine:
         self.chain = chain or ProcessorChain()
         self.backend = backend
         self.monitor_tap = MonitorTap()
+        # Raw microphone tap for the live-translation driver. Same bounded
+        # non-blocking contract as the monitor tap; offered pre-chain so the
+        # recogniser hears the input, and only while a driver holds it active.
+        self.translate_tap = MonitorTap(seconds=8.0)
         self.monitor_player = None
         self.monitor_error = ""
         self.monitor_gain_db = 0.0
@@ -149,6 +153,7 @@ class AudioEngine:
                      config.buffer_size, input_channels, output_channels, self.reported_latency_ms)
             self.monitor_error = ""
             self.monitor_tap.reset()
+            self.translate_tap.reset()
             self.set_monitor_gain(config.monitor_gain_db)
             if config.monitor and config.monitor_device is not None:
                 self.start_monitor(config.monitor_device)
@@ -225,6 +230,8 @@ class AudioEngine:
             np.logical_not(mask, out=mask)
             np.copyto(audio, 0.0, where=mask)
             self.input_peak = peak_level(audio)
+            if self.translate_tap.active:
+                self.translate_tap.offer(audio)
             audio = self.chain.process(audio, self.config.sample_rate)
             self.output_peak = peak_level(audio)
             if self.monitor_player is not None and self.monitor_player.running:

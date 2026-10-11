@@ -66,6 +66,14 @@ def is_newer(latest_tag, current_tag=APP_VERSION):
         return False
 
 
+def _version_matches(info_version, tag):
+    """release.json holds the version without the leading v; tags carry it."""
+    try:
+        return parse_version(str(info_version)) == parse_version(str(tag))
+    except UpdateError:
+        return False
+
+
 def _api_get(url, timeout):
     request = urllib.request.Request(url, headers={
         "Accept": "application/vnd.github+json",
@@ -145,16 +153,26 @@ def download_asset(url, destination, progress=None, timeout=120):
 
 
 def extract_package(archive, destination):
-    """Unpack a release asset; zip for Windows, tar.gz for Linux."""
+    """Unpack a release asset; zip for Windows, tar.gz for Linux.
+
+    Members that would escape the destination (absolute paths, ``..``) abort
+    the extraction instead of writing outside it.
+    """
     archive, destination = Path(archive), Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     try:
         if archive.suffix == ".zip":
             with zipfile.ZipFile(archive) as bundle:
+                for member in bundle.infolist():
+                    target = (destination / member.filename).resolve()
+                    if target != destination.resolve() and destination.resolve() not in target.parents:
+                        raise UpdateError(f"不正な同梱物です: {member.filename}")
                 bundle.extractall(destination)
         else:
             with tarfile.open(archive, "r:gz") as bundle:
-                bundle.extractall(destination)
+                bundle.extractall(destination, filter="data")
+    except UpdateError:
+        raise
     except Exception as error:
         raise UpdateError(f"展開に失敗しました: {error}") from error
     # A package may wrap everything in one top folder; unwrap it.
@@ -228,7 +246,7 @@ def begin_update_and_restart(staging_dir, version):
     if target is None:
         raise UpdateError("この実行形式では自動更新できません")
     info = read_package_release(staging_dir)
-    if str(info.get("version")) != str(version):
+    if not _version_matches(info.get("version"), version):
         raise UpdateError("更新パッケージが壊れています")
     plan = {
         "staging": str(Path(staging_dir).resolve()),

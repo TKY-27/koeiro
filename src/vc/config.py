@@ -5,7 +5,7 @@ from .models import VOICE_PROFILES
 from .voice_library import DEFAULT_VOICE_ID
 
 QUALITY_FACTORS = {'low_latency': 1, 'balanced': 2, 'stable': 4}
-VOICE_MODES = ('original', 'female_dsp', 'ai_voice')
+VOICE_MODES = ('original', 'female_dsp', 'ai_voice', 'translate')
 # Compute device for neural inference. 'auto' uses CUDA when the worker torch
 # can see a GPU, otherwise CPU. 'cuda' fails loudly without one; 'cpu' forces
 # the validated CPU route and hides GPUs for deterministic behaviour.

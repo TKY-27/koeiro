@@ -102,6 +102,25 @@ def test_extract_and_validate_package(tmp_path):
         app_update.extract_package(tmp_path / "missing.zip", tmp_path / "out")
 
 
+def test_version_match_ignores_the_leading_v():
+    """release.json carries 0.11.0 while the tag reads v0.11.0: same release."""
+    assert app_update._version_matches("0.11.0", "v0.11.0")
+    assert app_update._version_matches("v0.11.0", "v0.11.0")
+    assert not app_update._version_matches("0.11.0", "v0.12.0")
+    assert not app_update._version_matches("nope", "v0.11.0")
+
+
+def test_extract_rejects_members_escaping_the_destination(tmp_path):
+    archive = tmp_path / "evil.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("koeiro/release.json", json.dumps({"app": "Koeiro", "version": "v9.9.9"}))
+        bundle.writestr("koeiro/app.py", "new")
+        bundle.writestr("../escape.txt", "outside")
+    with pytest.raises(UpdateError):
+        app_update.extract_package(archive, tmp_path / "staging")
+    assert not (tmp_path / "escape.txt").exists()
+
+
 def test_download_asset_streams_and_cleans_up(monkeypatch, tmp_path):
     payload = b"x" * 100
 

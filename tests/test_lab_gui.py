@@ -35,6 +35,7 @@ def test_the_lab_drawer_keeps_every_switch_reachable(lab_window):
     qapp, window, _chain, _whisper = lab_window
     assert window._active_drawer == 'lab' and window.drawer_lab.isVisible()
     for attribute in ('governor_on', 'governor_status', 'translate_provider', 'translate_test_button',
+                      'translate_live_status',
                       'translate_reference', 'whisper_on', 'whisper_amount', 'whisper_pitch',
                       'remote_enabled', 'remote_host', 'remote_port', 'remote_test_button',
                       'diarization_on', 'diarization_speakers',
