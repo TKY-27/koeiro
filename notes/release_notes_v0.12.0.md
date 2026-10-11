@@ -127,15 +127,15 @@
 
 ## 検証（この版で実際に確認したこと）
 
-- テスト: `1086 passed, 9 skipped`、終了コード 0（GUIはオフスクリーン。スキップは隔離環境が要る
-  数値・学習系で従来どおり）。今回追加したのは、バンドごとの見出しとカードの並び、
-  バンドが縺れないこと（描画座標で確認）、カードが名乗る決定を持つこと、
-  診断が計測値だけであること、遅延の2ラベル、pre-roll説明文の5つです。
-- 「調整」の実測（1520x980 のオフスクリーン描画、引き出し幅 520 px）: ① 配線 y=12 高さ799
-  → ② 変換 y=821 高さ1852 → ③ アプリ y=2683 高さ1001。中身は ① マイク→出力先→モニター→
-  音の規格、② 入力の整え→声と話し方→Female DSP→声の微調整→抑揚補正、
-  ③ シーン→アプリの更新→Discord→診断の順で隙間なく並びます（この並びは
-  `tests/test_ui_flow.py` が押さえています）。
+- テスト: `1190 passed, 7 failed, 2 skipped`（GUIはオフスクリーン。失敗の7件はtorchaudio
+  未導入・ prosody データセット欠落の環境由来で従来どおり、スキップ2件も同様）。今回追加したのは、
+  バンドごとの見出しとカードの並び、バンドが縺れないこと（描画座標で確認）、カードが名乗る決定を持つこと、
+  診断が計測値だけであること、遅延の2ラベル、pre-roll説明文、同時通訳ルートとその再生・駆動、
+  出力の仕上げ、自動更新の版照合と展開防御です。
+- 「調整」の中身（1520x980 のオフスクリーン描画、引き出し幅 520 px）: ① 配線（マイク→出力先→
+  モニター→音の規格）→ ② 変換（入力の整え→声と話し方→Female DSP→声の微調整→抑揚補正→
+  出力の仕上げ）→ ③ アプリ（シーン→アプリの更新→Discord→診断）の順で隙間なく並びます
+  （この並びは `tests/test_ui_flow.py` が押さえています）。
 - 枠なしウィンドウの検証（オフスクリーン描画）: `FramelessWindowHint` が付き、最小化・
   最大化 / 元に戻す・閉じるの3ボタンが実際に状態を変えること、枠の当たり判定が4辺と
   四隅で正しいこと、ポインタが辺ごとに変わること、最大化中は境界を出さないこと、
@@ -153,8 +153,8 @@
 - レイアウトの実測: 1280x820 のウィンドウで、ステージ 950 px ＋ 声リスト 330 px。
   引き出しを開いてもステージ幅は 950 px のまま（重なる。押しのけない）。
   声リストを畳むとステージは 1280 px。この数値はテスト `tests/test_shell_preview.py` が押さえています。
-- 実行ファイル: `dist/Koeiro/Koeiro.exe` を**この画面変更のあとで再ビルド**しました（10/11 16:31、
-  5,180,357 bytes）。凍結exeを `--smoke-test --no-splash` で起動して終了コード 0。
+- 実行ファイル: `dist/Koeiro/Koeiro.exe` を**この画面変更のあとで再ビルド**しました（10/11 17:56、
+  5,193,603 bytes）。凍結exeを `--smoke-test --no-splash` で起動して終了コード 0。
   凍結バンドルの PYZ を読んで、`src.gui.shell` に `Band.body`、`src.gui.main_window` に
   `band_wire` / `band_convert` / `band_app`・`latency_detail`・`_preroll_text()`・
   「診断（実測値）」・「経路の固定値」と、新しい遅延の caveat 文が入っていることを確認しました。
@@ -163,7 +163,8 @@
   廃止した MicOrb・Sidebar・PageHeader は残っていません。同梱データ（`assets/icon.ico`・
   `assets/icon.png`・`src/gui/assets`・Female DSP の DLL・`models/user_voices`・`koeiro-root.txt`）も揃っています。
 - バンドル内容: 凍結バンドルのモジュール一覧に `src.lab.*`・`src.audio.governor`・
-  `src.processors.whisper`・`src.processors.diarization`・`src.vc.remote`・
+  `src.processors.whisper`・`src.processors.diarization`・`src.processors.natural_finish`・
+  `src.processors.translate_playback`・`src.translate.live`・`src.vc.remote`・
   `src.translate.providers`・`src.tts.provider`・`src.tts.client` を確認
 - ②TTS: 専用環境経由で実合成を1回実行（読込 4.4秒／合成 8.9秒／1.55秒の音声）
 - 未実施: 聴感確認、GPU機での速度・遅延、長時間運転、実際のDiscord音声経路
