@@ -140,14 +140,24 @@ def _mirror_ascii(source):
 
 
 def build_provider(root, **kwargs):
-    """A ready provider, or None when the model or the runtime is not installed.
+    """A ready provider, or None when nothing can synthesize.
 
     Returning None rather than raising keeps "TTS is optional" a caller-side branch,
-    never an exception in the middle of a request.
+    never an exception in the middle of a request. The model files are looked for
+    first, then the two ways they can be spoken through: this process (a user who
+    installed kokoro-onnx into the app's own environment) and, when that import is
+    absent, the dedicated TTS environment through :mod:`src.tts.client`.
     """
     if not available(root):
         return None
     try:
         return KokoroProvider(root, **kwargs)
+    except TtsUnavailable:
+        pass
+    from src.tts.client import KokoroClient, worker_available
+    if not worker_available(root):
+        return None
+    try:
+        return KokoroClient(root, **kwargs)
     except TtsUnavailable:
         return None

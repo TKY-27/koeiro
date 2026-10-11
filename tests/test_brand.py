@@ -83,11 +83,20 @@ def test_window_carries_the_app_icon(ai_window):
     assert not window_icon().isNull()
 
 
-def test_sidebar_brand_uses_the_icon(ai_window):
+def test_the_stage_foot_carries_the_brand_and_the_header_does_not(ai_window):
+    """The bar states the engine state alone; the mark sits with the stage foot."""
     from PySide6.QtWidgets import QLabel
     _app, window, _backend, _bridge = ai_window
-    mark = window.sidebar.findChild(QLabel, "brandIcon")
-    assert mark is not None and not mark.pixmap().isNull()
+    assert window.header.findChild(QLabel, "brandIcon") is None
+    assert window.header.findChild(QLabel, "brand") is None
+    badge = window.nameplate.findChild(QLabel, "plateIcon")
+    wordmark = window.nameplate.findChild(QLabel, "plateLogo")
+    assert badge is not None and not badge.pixmap().isNull()
+    assert wordmark is not None and not wordmark.pixmap().isNull()
+    # The transparent margins are cut, so the letters fill the height instead
+    # of shrinking into the file's empty surround.
+    assert wordmark.pixmap().height() == window.nameplate.LOGO_PX
+    assert wordmark.pixmap().width() > wordmark.pixmap().height() * 2
 
 
 def test_splash_locks_and_reveals_the_window(ai_window):

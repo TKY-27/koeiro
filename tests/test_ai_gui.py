@@ -215,7 +215,7 @@ def test_first_run_guide_waits_for_the_splash_instead_of_covering_it(ai_window, 
     app.processEvents()
     assert window._guide_open is False
     assert _wait_guide(app, window, True), 'the guide never followed the splash'
-    window._guide_dialog.close()
+    window._guide_overlay.skip()
     assert _wait_guide(app, window, False)
 
     # Without a splash to play there is nothing to wait for.
@@ -223,5 +223,40 @@ def test_first_run_guide_waits_for_the_splash_instead_of_covering_it(ai_window, 
     window.settings = replace(window.settings, tutorial_seen=False)
     window._schedule_first_run_tutorial()
     assert _wait_guide(app, window, True)
-    window._guide_dialog.close()
+    window._guide_overlay.skip()
     assert _wait_guide(app, window, False)
+
+
+def test_startup_diagnosis_reads_voices_from_the_recorded_tree(ai_window, tmp_path, monkeypatch):
+    """The regression: a frozen GUI reported every AI voice missing while it worked.
+
+    ``_diagnose_voice`` resolved the voice folders from this file's location, which
+    is the bundle's ``_internal`` tree when frozen -- holding only the default voice
+    and none of the model assets. The foot then showed 利用できません over a Ready
+    bridge that converted fine. The check now uses ``model_root()``, the same tree
+    the worker and the TTS lookup use.
+    """
+    from pathlib import Path
+
+    from src import runtime_paths
+
+    _app, window, _backend, _bridge = ai_window
+    source = tmp_path / 'install'
+    bundle = source / 'dist' / 'Koeiro' / '_internal'
+    bundle.mkdir(parents=True)
+    (bundle / runtime_paths.ROOT_FILE).write_text(str(source), 'utf-8')
+    monkeypatch.setattr(runtime_paths, 'asset_root', lambda: bundle)
+    monkeypatch.setattr(runtime_paths, 'is_frozen', lambda: True)
+    captured = {}
+
+    def fake_diagnostics(root, model=None):
+        captured['root'] = Path(root)
+        captured['model'] = model
+        return {'ai_available': True, 'issues': []}
+
+    monkeypatch.setattr('src.gui.main_window.startup_diagnostics', fake_diagnostics)
+    window._diagnostic_model = 'user_probe_voice'
+    window._diagnose_voice('user_probe_voice')
+    assert captured['root'] == source
+    assert captured['model'] == 'user_probe_voice'
+    assert window.startup_diagnostic == {'ai_available': True, 'issues': []}

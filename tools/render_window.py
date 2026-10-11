@@ -47,12 +47,13 @@ def main():
         application.processEvents()
         time.sleep(0.005)
     window.resize(args.width, args.height)
-    window._show_page(args.page)
+    # `--page` now names a drawer: 'tune', 'lab', or anything else for the stage alone.
+    window._open_drawer(args.page if args.page in window.drawers else None)
     if args.running:
-        # Feed the orb and meters a level so the running state is visible.
+        # Feed the stage a level so the running state is visible.
         window._display_input = 0.42
         window._display_output = 0.55
-        window.orb.set_level(0.55)
+        window.relay.set_level(0.42)
     window.grab().save(args.out)
     print('saved', args.out)
     return 0

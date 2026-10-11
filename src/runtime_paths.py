@@ -97,6 +97,21 @@ def build_root():
     return Path(recorded) if recorded else None
 
 
+def model_root():
+    """Tree holding the user-installed models and helper environments.
+
+    A packaged GUI sits in ``dist/Koeiro/`` and bundles no ``models/`` of its own, so
+    the optional folders -- Kokoro TTS weights and the environments the installers
+    create beside them -- stay in the tree the build recorded. An unfrozen run just
+    uses the source tree it is running from.
+    """
+    if is_frozen():
+        recorded = build_root()
+        if recorded is not None:
+            return recorded
+    return asset_root()
+
+
 def install_root():
     """Directory the packaged build takes its AI environment from.
 
@@ -117,7 +132,11 @@ def install_root():
         bundle = asset_root()
         if bundle.is_dir() and bundle.name == '_internal':
             return bundle.parent
-    return Path(sys.executable).resolve().parent
+    # Unfrozen, the worker resolves `-m src.vc.service` from its working directory,
+    # so it must start in the source tree. The interpreter's own folder (a venv's
+    # Scripts) holds no `src/`: launching app.py with it reported every model
+    # missing while the files sat in the repository.
+    return asset_root()
 
 
 def worker_executable():

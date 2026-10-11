@@ -154,3 +154,7 @@ class AudioController:
     def set_denoise(self, strength):
         """Live, in-place: 0 is a pass-through, so switching needs no stream restart."""
         self.engine.chain.denoise.set_strength(strength)
+
+    def set_finish(self, enabled):
+        """Live, in-place: the stage eases its gain back to unity when switched off."""
+        self.engine.chain.finish.enabled = bool(enabled)

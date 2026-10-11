@@ -274,7 +274,7 @@ def open_ipc(platform=None, environ=None, paths=None):
         return DiscordIPC(transport)
     raise PresenceUnavailable(
         'Discord IPC unavailable (is the desktop client running?)'
-        + (f' — {failures[0]}' if failures else ''))
+        + (f' · {failures[0]}' if failures else ''))
 
 
 class DiscordIPC:

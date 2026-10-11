@@ -67,7 +67,11 @@ def test_gui_devices_controls_live_parameters_and_ten_cycles(window, qapp):
         pump(qapp, lambda: window.start_button.isEnabled())
         assert not window.controller.engine.running
     assert len(backend.streams) == 10
+    # The stage carries the one number and its caveat; the breakdown behind it is in
+    # the 診断 card, under its own name.
     assert "実測値ではありません" in window.latency.text()
+    assert "Buffer latency" in window.latency_detail.text()
+    assert window.latency is not window.latency_detail
 
 
 def test_refresh_waits_for_worker_and_does_not_block_ui(window, qapp, monkeypatch):

@@ -1,7 +1,8 @@
 import pytest
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtWidgets import QApplication
 
-from src.gui.tutorial import PAGES, TutorialDialog
+from src.gui.tutorial import PAGES, TutorialOverlay
 from tests.test_ai_gui import ai_window, pump  # noqa: F401  (ai_window is used as a fixture)
 
 
@@ -10,46 +11,182 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def test_tutorial_has_six_pages(qapp):
-    dialog = TutorialDialog()
+def _overlay(window):
+    """A guide attached to the real window, as the app builds it."""
+    overlay = TutorialOverlay(window.centralWidget(), on_page=window._guide_page)
+    overlay.start()
+    window.show()
+    for _ in range(20):
+        QApplication.processEvents()
+    return overlay
+
+
+def _settle(app, window):
+    pump(app, lambda: window.isVisible())
+    for _ in range(20):
+        app.processEvents()
+
+
+def test_guide_has_six_short_steps(qapp):
+    assert len(PAGES) == 6
+    for spec in PAGES:
+        lines = [line for line in spec['body'].split('\n') if line.strip()]
+        # The ring says where to look; the text only says what to do there.
+        assert 0 < len(lines) <= 3, (spec['title'], lines)
+        assert len(spec['title']) <= 20, spec['title']
+
+
+def test_the_guide_dims_everything_except_the_control_it_names(ai_window):
+    app, window, backend, bridge = ai_window
+    _settle(app, window)
+    overlay = _overlay(window)
     try:
-        assert dialog.stack.count() == 6
-        assert len(PAGES) == 6
-        assert dialog.page == 0
+        lit = overlay.target_rect
+        assert lit is not None and lit.width() > 40 and lit.height() > 10
+        image = overlay.grab().toImage()
+        # Inside the lit window the app shows through untouched.
+        inside = image.pixelColor(lit.center())
+        assert inside.alpha() == 0, inside.alpha()
+        # Away from it the window is dimmed, not covered.
+        corner = image.pixelColor(QPoint(4, overlay.height() - 4))
+        assert corner.alpha() > 150, corner.alpha()
+        assert corner.alpha() < 255
     finally:
-        dialog.close()
+        overlay.skip()
+        window.close()
 
 
-def test_tutorial_navigation_and_finish(qapp):
-    dialog = TutorialDialog()
+def test_the_note_sits_beside_the_control_and_never_on_top_of_it(ai_window):
+    app, window, backend, bridge = ai_window
+    _settle(app, window)
+    overlay = _overlay(window)
     try:
-        assert not dialog.back_button.isEnabled()
-        for _ in range(5):
-            dialog.next_button.click()
-        assert dialog.page == 5
-        assert dialog.next_button.text() == "はじめる"
-        assert dialog.back_button.isEnabled()
-        dialog.next_button.click()
-        assert dialog.result() == QDialog.DialogCode.Accepted
+        for _index, _spec in enumerate(PAGES):
+            lit = overlay.target_rect
+            card = overlay.card.geometry()
+            assert overlay.rect().contains(card), card
+            if lit is not None:
+                assert not card.intersects(lit), (card, lit)
+            overlay.next_button.click()
+            app.processEvents()
     finally:
-        dialog.close()
+        overlay.skip()
+        window.close()
 
 
-def test_tutorial_back_and_skip(qapp):
-    dialog = TutorialDialog()
+def _widget_rect(widget, overlay):
+    """The widget's rectangle in the overlay's coordinates."""
+    from PySide6.QtCore import QRect
+    return QRect(widget.mapTo(overlay, QPoint(0, 0)), widget.size())
+
+
+def test_guide_walks_the_window_and_lights_each_control(ai_window):
+    app, window, backend, bridge = ai_window
+    _settle(app, window)
+    overlay = _overlay(window)
     try:
-        dialog.next_button.click()
-        dialog.next_button.click()
-        assert dialog.page == 2
-        dialog.back_button.click()
-        assert dialog.page == 1
-        assert not dialog.hide_next_time
-        dialog.hide_box.setChecked(True)
-        assert dialog.hide_next_time
-        dialog.skip_button.click()
-        assert dialog.result() == QDialog.DialogCode.Rejected
+        for index, spec in enumerate(PAGES):
+            while overlay.page < index:
+                overlay.next_button.click()
+                app.processEvents()
+            expected = spec.get('drawer')
+            assert window._active_drawer == expected, spec['title']
+            for key, drawer in window.drawers.items():
+                assert drawer.isVisible() == (key == expected), spec['title']
+            target = spec.get('target')
+            if target and getattr(window, target).isVisible():
+                lit = overlay.target_rect
+                widget = getattr(window, target)
+                assert lit is not None, spec['title']
+                assert lit.contains(_widget_rect(widget, overlay)), spec['title']
     finally:
-        dialog.close()
+        overlay.skip()
+        window.close()
+
+
+def test_navigation_buttons_and_skip(ai_window):
+    app, window, backend, bridge = ai_window
+    _settle(app, window)
+    finished = []
+    overlay = _overlay(window)
+    overlay.finished.connect(finished.append)
+    try:
+        assert overlay.page == 0
+        assert not overlay.back_button.isEnabled()
+        assert overlay.next_button.text() == '次へ'
+        overlay.next_button.click()
+        app.processEvents()
+        assert overlay.page == 1
+        overlay.back_button.click()
+        app.processEvents()
+        assert overlay.page == 0
+        assert not finished
+        # Skip closes without remembering, and the signal carries the choice.
+        overlay.skip_button.click()
+        app.processEvents()
+        assert finished == [False]
+        assert not overlay.isVisible()
+    finally:
+        overlay.deleteLater()
+        window.close()
+
+
+def test_the_last_step_finishes_and_the_newer_keys_work(ai_window):
+    app, window, backend, bridge = ai_window
+    _settle(app, window)
+    finished = []
+    overlay = _overlay(window)
+    overlay.finished.connect(finished.append)
+    try:
+        for _ in range(len(PAGES) - 1):
+            overlay.next_button.click()
+            app.processEvents()
+        assert overlay.page == len(PAGES) - 1
+        assert overlay.next_button.text() == 'はじめる'
+        # Escape skips, the arrow keys move: no mouse needed.
+        overlay.next_button.click()
+        app.processEvents()
+        assert finished == [True]
+    finally:
+        overlay.deleteLater()
+        window.close()
+
+    overlay = _overlay(window)
+    try:
+        overlay.keyPressEvent(_key_event(Qt.Key.Key_Right))
+        assert overlay.page == 1
+        overlay.keyPressEvent(_key_event(Qt.Key.Key_Left))
+        assert overlay.page == 0
+        overlay.keyPressEvent(_key_event(Qt.Key.Key_Escape))
+        assert not overlay.isVisible()
+    finally:
+        overlay.deleteLater()
+        window.close()
+
+
+def _key_event(key):
+    from PySide6.QtGui import QKeyEvent
+    return QKeyEvent(QKeyEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+
+
+def test_next_is_the_bright_one_and_back_is_plain(ai_window):
+    """The two buttons are told apart by fill, not only by label."""
+    from PySide6.QtGui import QColor
+    from src.gui.shell import PILL, PRIMARY
+    from tests.fakes import dominant_colour
+    app, window, backend, bridge = ai_window
+    _settle(app, window)
+    overlay = _overlay(window)
+    try:
+        forward = QColor(dominant_colour(overlay.next_button.grab().toImage()))
+        back = QColor(dominant_colour(overlay.back_button.grab().toImage()))
+        assert forward.name().lower() == PRIMARY.lower(), forward.name()
+        assert back.name().lower() == PILL.lower(), back.name()
+        # Navy fill against a light pill: told apart by lightness either way.
+        assert back.lightness() - forward.lightness() > 100
+    finally:
+        overlay.skip()
+        window.close()
 
 
 def test_tutorial_seen_roundtrip():
@@ -81,18 +218,19 @@ def test_first_run_tutorial_marks_seen(ai_window, monkeypatch):
     from src.gui import tutorial as tutorial_module
     app, window, backend, bridge = ai_window
     calls = []
-    real = tutorial_module.TutorialDialog
+    real = tutorial_module.TutorialOverlay
 
-    class StubDialog(real):
-        def __init__(self, parent=None, on_page=None):
-            calls.append(parent)
-            super().__init__(parent, on_page=on_page)
+    class StubOverlay(real):
+        def __init__(self, host, on_page=None, parent=None):
+            calls.append(host)
+            super().__init__(host, on_page=on_page, parent=parent)
             self.hide_box.setChecked(True)
 
-        def show(self):
-            self.accept()
+        def start(self):
+            super().start()
+            self._close(True)
 
-    monkeypatch.setattr(tutorial_module, "TutorialDialog", StubDialog)
+    monkeypatch.setattr(tutorial_module, "TutorialOverlay", StubOverlay)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     assert window.settings.tutorial_seen is False
     window._maybe_show_tutorial()
@@ -110,7 +248,7 @@ def test_no_tutorial_when_already_seen(ai_window, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("tutorial must not open")
 
-    monkeypatch.setattr(tutorial_module, "TutorialDialog", forbidden)
+    monkeypatch.setattr(tutorial_module, "TutorialOverlay", forbidden)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     window._maybe_show_tutorial()
 
@@ -119,71 +257,55 @@ def test_first_run_guide_skip_keeps_it_for_the_next_launch(ai_window, monkeypatc
     """Skipping closes the guide without remembering it; hiding remembers it."""
     from src.gui import tutorial as tutorial_module
     app, window, backend, bridge = ai_window
-    real = tutorial_module.TutorialDialog
+    real = tutorial_module.TutorialOverlay
 
-    class StubDialog(real):
-        def show(self):
-            self.reject()
+    class StubOverlay(real):
+        def start(self):
+            super().start()
+            self.skip()
 
-    monkeypatch.setattr(tutorial_module, "TutorialDialog", StubDialog)
+    monkeypatch.setattr(tutorial_module, "TutorialOverlay", StubOverlay)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     window._maybe_show_tutorial()
     assert window.settings.tutorial_seen is False
     assert window._guide_open is False
 
 
-def test_guide_button_is_pinned_to_the_bottom_right(ai_window):
+def test_the_guide_button_lives_in_the_header(ai_window):
+    from PySide6.QtWidgets import QPushButton
     app, window, backend, bridge = ai_window
     window.resize(1200, 820)
     window.show()
     app.processEvents()
-    window._place_help_button()
-    container = window.centralWidget()
-    assert window.help_button.isEnabled()
-    assert window.help_button.x() + window.help_button.width() <= container.width()
-    assert window.help_button.y() + window.help_button.height() <= container.height()
-    assert window.help_button.x() > container.width()*0.5
-    assert window.help_button.y() > container.height()*0.5
+    button = window.help_button
+    assert button is window.header.help_button
+    assert button.isEnabled() and button.isVisible()
+    # No floating corner button any more: the header is the one entry point.
+    assert window.centralWidget().findChild(QPushButton, 'helpFab') is None
 
 
-def test_guide_walks_the_window_and_highlights_each_control(ai_window):
-    from src.gui.tutorial import PAGES
-    app, window, backend, bridge = ai_window
-    dialog = TutorialDialog(window, on_page=window._guide_page)
-    try:
-        for index, spec in enumerate(PAGES):
-            while dialog.page < index:
-                dialog.next_button.click()
-            assert window._active_page == spec['page']
-            target = spec.get('target')
-            if target:
-                assert getattr(window, target).property('guide') is True, spec['title']
-        dialog.skip_button.click()
-        assert dialog.result() == QDialog.DialogCode.Rejected
-        assert window.settings.tutorial_seen is False
-    finally:
-        dialog.close()
-
-
-def test_closing_the_guide_clears_the_highlight_and_keeps_it_for_next_launch(ai_window, monkeypatch):
+def test_closing_the_guide_clears_the_overlay_and_keeps_it_for_next_launch(ai_window, monkeypatch):
     from src.gui import tutorial as tutorial_module
     app, window, backend, bridge = ai_window
-    real = tutorial_module.TutorialDialog
+    real = tutorial_module.TutorialOverlay
 
     class Scripted(real):
         """A reader who turns three pages and then closes the guide."""
 
-        def show(self):
-            super().show()
+        def start(self):
+            super().start()
             for _ in range(4):
                 self.next_button.click()
-            self.reject()
+                QApplication.processEvents()
+            self.skip()
 
-    monkeypatch.setattr(tutorial_module, 'TutorialDialog', Scripted)
+    monkeypatch.setattr(tutorial_module, 'TutorialOverlay', Scripted)
     window._show_tutorial()
-    assert window._active_page == 'home'
-    assert window.start_button.property('guide') is False
+    assert window._guide_open is False
+    assert getattr(window, '_guide_overlay', None) is None
     assert window.settings.tutorial_seen is False
+    # The bar stops marking the guide as the surface on screen.
+    assert window.header.help_button.property('active') is not True
 
 
 def test_default_voice_shows_as_the_app_standard(ai_window):
@@ -198,3 +320,49 @@ def test_default_voice_shows_as_the_app_standard(ai_window):
     # Thread count still applies to the standard voice; the fixed processing chunk does not.
     assert window.ai_threads.isEnabled()
     assert not window.ai_quality.isEnabled()
+
+
+def _near(first, second, tolerance=10):
+    return all(abs(first[i] - second[i]) <= tolerance for i in range(3))
+
+
+def test_the_note_stays_above_the_drawer_it_describes(ai_window):
+    """A drawer step must not bury the guide: the card paints last.
+
+    Opening a drawer raises it above everything, including the guide overlay,
+    so the dim and the note ended up behind the surface they describe. The
+    overlay now re-raises itself after each page: the card's navy edge must be
+    visible in the composited window on every step, drawer steps included.
+    """
+    from PySide6.QtGui import QColor
+    app, window, backend, bridge = ai_window
+    _settle(app, window)
+    overlay = _overlay(window)
+    try:
+        edge = QColor('#284b7d')
+        for index, spec in enumerate(PAGES):
+            while overlay.page < index:
+                overlay.next_button.click()
+                app.processEvents()
+            app.processEvents()
+            image = window.grab().toImage()
+            card = overlay.card.geometry()
+            left = card.left() + card.width() // 4
+            right = card.left() + card.width() * 3 // 4
+            found = False
+            for dx in range(left, right + 1):
+                for dy in (card.top() - 1, card.top(), card.top() + 1):
+                    point = overlay.mapTo(window, QPoint(dx, dy))
+                    if not image.rect().contains(point):
+                        continue
+                    pixel = image.pixelColor(point)
+                    if _near((pixel.red(), pixel.green(), pixel.blue()),
+                             (edge.red(), edge.green(), edge.blue())):
+                        found = True
+                        break
+                if found:
+                    break
+            assert found, (spec['title'], card)
+    finally:
+        overlay.skip()
+        window.close()

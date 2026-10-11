@@ -16,7 +16,7 @@ from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QPropertyAnimation, QEas
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel, QVBoxLayout, QWidget
 
-BACKGROUND = "#0B1020"
+BACKGROUND = "#284b7d"
 
 FADE_IN_MS = 900
 HOLD_MS = 900

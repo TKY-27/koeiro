@@ -24,16 +24,40 @@ def main():
 
     from src.gui import shell
 
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+
     style = shell.stylesheet(ROOT/'src/gui/assets')
-    # Standalone shell render: the sidebar, orb and voice panel exactly as the
-    # window uses them.
-    window = shell.MicOrb()
-    window.setStyleSheet(style)
-    window.resize(760, 420)
-    window.set_state('マイク入力中', '声が変換されて出力されます', active=True)
-    window.set_level(0.62)
-    window.grab().save(args.out)
-    print('orb:', args.out)
+    # Standalone shell render: the header and the stage exactly as the window uses them.
+    header = shell.HeaderBar()
+    header.setStyleSheet(style)
+    header.resize(args.width, 54)
+    header.set_badge('running')
+    header.grab().save(args.out)
+    print('header:', args.out)
+
+    stage = QWidget()
+    stage.setStyleSheet(style)
+    column = QVBoxLayout(stage)
+    column.setContentsMargins(28, 18, 28, 18)
+    column.setSpacing(12)
+    level = shell.LevelBar(bars=1)
+    level.set_level(0.62)
+    level_caption = QLabel('入力レベル')
+    level_caption.setObjectName('muted')
+    column.addWidget(level_caption)
+    column.addWidget(level)
+    relay = shell.Relay()
+    relay.set_state('running')
+    relay.set_level(0.62)
+    column.addWidget(relay)
+    latency = QLabel('26 ms')
+    latency.setObjectName('latencyValue')
+    column.addWidget(latency)
+    stage.resize(args.width, 280)
+    stage_path = str(Path(args.out).with_name(Path(args.out).stem+'_stage.png'))
+    stage.grab().save(stage_path)
+    print('stage:', stage_path)
 
     rail = shell.VoicePanel()
     rail.setStyleSheet(style)
@@ -49,12 +73,29 @@ def main():
     rail.grab().save(rail_path)
     print('panel:', rail_path)
 
-    nav = shell.Sidebar()
-    nav.setStyleSheet(style)
-    nav.resize(196, 620)
-    nav_path = str(Path(args.out).with_name(Path(args.out).stem+'_sidebar.png'))
-    nav.grab().save(nav_path)
-    print('sidebar:', nav_path)
+    # The stage foot: the readiness block on the left, the product mark on the right.
+    foot = QWidget()
+    foot.setStyleSheet(style)
+    foot_row = QHBoxLayout(foot)
+    foot_row.setContentsMargins(28, 18, 28, 18)
+    readiness = shell.AiReadiness()
+    readiness.set_state('loading')
+    foot_row.addWidget(readiness, 0, Qt.AlignmentFlag.AlignBottom)
+    foot_row.addStretch(1)
+    foot_row.addWidget(shell.Nameplate(), 0, Qt.AlignmentFlag.AlignBottom)
+    foot.resize(args.width, 120)
+    foot_path = str(Path(args.out).with_name(Path(args.out).stem+'_foot.png'))
+    foot.grab().save(foot_path)
+    print('foot:', foot_path)
+
+    drawer = shell.Drawer('調整', 'マイク、話し方、音量、加工、診断。変更はこの面の中で完結します。')
+    drawer.setStyleSheet(style)
+    drawer.resize(shell.Drawer.WIDTH, 620)
+    drawer.body.addWidget(QLabel('ドロワーの中身は MainWindow が入れる。'))
+    drawer.open()
+    drawer_path = str(Path(args.out).with_name(Path(args.out).stem+'_drawer.png'))
+    drawer.grab().save(drawer_path)
+    print('drawer:', drawer_path)
 
 
 if __name__ == '__main__':

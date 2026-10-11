@@ -8,6 +8,22 @@ INPUT = AudioDevice(0, "Physical Microphone", "Windows WASAPI", 2, 0, True, Fals
 OUTPUT = AudioDevice(1, "CABLE Input (VB-Audio Virtual Cable)", "Windows WASAPI", 0, 2, False, True)
 
 
+def pixel_colours(image):
+    """Every distinct colour a rendered widget shows, lower-case hex."""
+    return {image.pixelColor(x, y).name().lower()
+            for y in range(image.height()) for x in range(image.width())}
+
+
+def dominant_colour(image):
+    """The colour a rendered widget is mostly filled with, ignoring its glyphs."""
+    counts = {}
+    for y in range(image.height()):
+        for x in range(image.width()):
+            name = image.pixelColor(x, y).name()
+            counts[name] = counts.get(name, 0) + 1
+    return max(counts.items(), key=lambda item: item[1])[0]
+
+
 def flags(**values):
     return SimpleNamespace(**dict.fromkeys(("input_underflow", "output_underflow",
                                            "input_overflow", "output_overflow"), False) | values)

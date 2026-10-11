@@ -8,6 +8,7 @@ from src.processors.dsp_parameters import DSPParameters, MODES, QUALITIES
 from src.presets.female_presets import PRESETS
 from src.vc.config import AIParameters, DEVICES, EXPERIMENTS, QUALITY_FACTORS, VOICE_MODES, UTTERANCE_ENHANCERS
 from src.prosody.parameters import ProsodyParameters
+from src.lab.parameters import LabParameters
 from src.vc.voice_library import DEFAULT_VOICE_ID
 
 log = logging.getLogger(__name__)
@@ -44,6 +45,8 @@ class AppSettings:
     # Off by default: the spectral stage is a user choice, not the shipped route.
     denoise: bool = False
     denoise_strength: float = 0.6
+    # Off by default: output conditioning is a user choice, not the shipped route.
+    finish: bool = False
     monitor: bool = False
     monitor_device: dict | None = None
     monitor_volume_db: float = 0.0
@@ -92,9 +95,16 @@ class AppSettings:
     # It is local IPC only -- no login, no token, no network.
     discord_presence: bool = True
     prosody: dict = field(default_factory=lambda: asdict(ProsodyParameters()))
+    # The lab features (governor, translation voice, whisper, LAN inference, voice
+    # alchemy, speaker routing). Kept in one nested object like prosody, so a build
+    # that does not know about one of them still loads the rest of the settings.
+    lab: dict = field(default_factory=lambda: asdict(LabParameters()))
 
     def prosody_parameters(self):
         return ProsodyParameters.from_dict(self.prosody)
+
+    def lab_parameters(self):
+        return LabParameters.from_dict(self.lab)
 
     def ai_parameters(self):
         return AIParameters(quality=self.ai_quality, threads=self.ai_threads, device=self.ai_device, model=self.ai_model,
@@ -122,6 +132,7 @@ class AppSettings:
         defaults = cls()
         values = {}
         values['prosody']=asdict(ProsodyParameters.from_dict(data.get('prosody')))
+        values['lab']=asdict(LabParameters.from_dict(data.get('lab')))
         for field in ("input_device", "output_device"):
             values[field] = _device(data.get(field))
         for field, choices in (("sample_rate", SAMPLE_RATES), ("buffer_size", BUFFERS)):
@@ -132,6 +143,8 @@ class AppSettings:
         denoise = data.get("denoise")
         values["denoise"] = denoise if type(denoise) is bool else False
         values["denoise_strength"] = _number(data.get("denoise_strength"), 0.6, 0, 1)
+        finish = data.get("finish")
+        values["finish"] = finish if type(finish) is bool else False
         monitor = data.get("monitor")
         values["monitor"] = monitor if type(monitor) is bool else False
         values["monitor_device"] = _device(data.get("monitor_device"))

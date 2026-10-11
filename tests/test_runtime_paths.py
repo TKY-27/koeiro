@@ -109,6 +109,45 @@ def test_a_packaged_gui_without_any_environment_says_so(tmp_path, monkeypatch):
     assert runtime_paths.worker_environment() is None
 
 
+def test_optional_models_are_read_from_the_tree_the_build_recorded(tmp_path, monkeypatch):
+    """A bundled GUI has no models/ of its own, so Kokoro must be looked up beside it.
+
+    The TTS weights are user-installed, never bundled: the frozen bundle would report
+    the model as missing while the user's own download sits in the source tree.
+    """
+    source = tmp_path / 'install' / 'Koeiro'
+    bundle = source / 'dist' / 'Koeiro' / '_internal'
+    bundle.mkdir(parents=True)
+    monkeypatch.setattr(runtime_paths, 'asset_root', lambda: bundle)
+    monkeypatch.setattr(runtime_paths, 'is_frozen', lambda: True)
+    (bundle / runtime_paths.ROOT_FILE).write_text(str(source), 'utf-8')
+    assert runtime_paths.model_root() == source
+    # Without the record there is nothing better to fall back to than the bundle.
+    (bundle / runtime_paths.ROOT_FILE).unlink()
+    assert runtime_paths.model_root() == bundle
+
+
+def test_an_unfrozen_run_takes_its_models_from_the_source_tree(monkeypatch):
+    monkeypatch.setattr(runtime_paths, 'is_frozen', lambda: False)
+    monkeypatch.setattr(runtime_paths, 'asset_root', lambda: Path('/repo'))
+    assert runtime_paths.model_root() == Path('/repo')
+
+
+def test_an_unfrozen_worker_starts_in_the_source_tree(tmp_path, monkeypatch):
+    """The regression: app.py runs on the venv interpreter, whose folder holds no src/.
+
+    The worker resolves `-m src.vc.service` from its working directory, so an
+    unfrozen launch must start it in the source tree -- not beside an interpreter
+    that lives in `.venv/Scripts`. Before this, every source launch logged
+    `No module named 'src'` and reported the AI model missing.
+    """
+    monkeypatch.setattr(runtime_paths, 'is_frozen', lambda: False)
+    monkeypatch.setattr(runtime_paths, 'asset_root', lambda: tmp_path / 'repo')
+    monkeypatch.setattr(sys, 'executable',
+                        str(tmp_path / 'repo' / '.venv' / 'Scripts' / 'python.exe'))
+    assert runtime_paths.install_root() == tmp_path / 'repo'
+
+
 def test_a_bundled_worker_is_found_by_either_name(tmp_path, monkeypatch):
     root = _install_root(tmp_path)
     root.mkdir(parents=True)

@@ -4,7 +4,7 @@ from .test_ai_gui import ai_window, pump
 def test_ab_hotkey_toggles_original_and_last_route(ai_window):
     app, window, backend, bridge = ai_window
     pump(app, lambda: bridge.status == 'Ready')
-    assert set(window.hotkeys) == {'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+D'}
+    assert set(window.hotkeys) == {'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+D', 'Ctrl+F'}
     window.mode.setCurrentIndex(window.mode.findData('ai_voice'))
     pump(app, lambda: not window._pending and bridge.status == 'Ready')
     window._ab_toggle()
