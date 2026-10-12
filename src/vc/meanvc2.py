@@ -128,16 +128,39 @@ class MeanVC2Backend(VoiceConversionBackend):
             interpolation_grid_delay_ms=40 if self.bn_interpolation=='fixed_linear' else 0,
             vocoder_batch_frames=self.vocoder_batch_frames,
             vc_group_chunks=self.vc_group_chunks,
-            model_alignment_delay_ms=None,algorithmic_buffer_ms=self.algorithmic_buffer_ms,
+            model_alignment_delay_ms=self.algorithmic_buffer_ms,algorithmic_buffer_ms=self.algorithmic_buffer_ms,
             load_seconds=time.perf_counter()-started)
         self.stats['vocoder_parameter_shapes']=vocoder_shapes
 
     @property
-    def algorithmic_buffer_ms(self):
-        # Reserve whole input hops for both grouped VC and waveform bursts.
+    def buffer_frames_ms(self):
+        # The decoder's own delay line: whole input hops for grouped VC and
+        # waveform bursts. reset() prefills pending_audio with exactly this many
+        # samples, so this is the part grouping moves.
         base=640 if self.feature_frontend=='aligned' else 480
         extra=(self.vc_group_chunks-1)*12+self.vocoder_batch_frames-1
         return base+((extra+15)//16)*160
+
+    @property
+    def frontend_latency_ms(self):
+        # Measured delay the frontend adds on top of that line, kept apart from it
+        # because it is not buffer: correlating the input and output log-energy
+        # envelopes (the same estimator returns a known 600ms shift exactly) gives
+        # 50ms for the legacy frontend and exactly 0ms for the aligned one, at
+        # both group6/vocoder36 and group1/vocoder1, so it does not scale with
+        # grouping. It is the legacy branch's frame-origin carry (the 240-sample
+        # wave_tail re-entering the fbank window).
+        return 0 if self.feature_frontend=='aligned' else 50
+
+    @property
+    def algorithmic_buffer_ms(self):
+        # The route's total input->output delay: what convert_utterance trims,
+        # what the phrase repair aligns the source against, and what the GUI
+        # reports. Treating it as the delay line alone left the trimmed result
+        # 50ms late against the source on the legacy frontend, which cost the
+        # retrospective shaping its alignment (measured energy_correlation 0.79
+        # misaligned, 0.93 aligned). See notes/meanvc2_alignment.md.
+        return self.buffer_frames_ms+self.frontend_latency_ms
 
     def select_profile(self, selected):
         """Control/worker-side selection before warmup; reference stays fixed."""
@@ -180,7 +203,8 @@ class MeanVC2Backend(VoiceConversionBackend):
         if self.vc is not None:
             self.stats.update(vc_group_chunks=self.vc_group_chunks,
                               vocoder_batch_frames=self.vocoder_batch_frames,
-                              algorithmic_buffer_ms=self.algorithmic_buffer_ms)
+                              algorithmic_buffer_ms=self.algorithmic_buffer_ms,
+                              model_alignment_delay_ms=self.algorithmic_buffer_ms)
         if selected.get('optimized_condition'):
             self.stats['optimized_condition'] = selected['optimized_condition']
 
@@ -196,7 +220,7 @@ class MeanVC2Backend(VoiceConversionBackend):
         self.fbank_pending=t.empty(0,80,device=dev)
         self.previous_bn=None;self.cond=t.empty(1,0,256,device=dev);self.noise=t.empty(1,0,80,device=dev)
         self.kv=None;self.mels=t.empty(1,80,0,device=dev);self.mel_origin=0;self.decoded_frames=0
-        self.pending_audio=np.zeros(self.algorithmic_buffer_ms*16,dtype=np.float32)
+        self.pending_audio=np.zeros(self.buffer_frames_ms*16,dtype=np.float32)
         self.generator=t.Generator(device=dev).manual_seed(110)
         self.calls=0
 

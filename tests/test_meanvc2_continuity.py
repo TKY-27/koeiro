@@ -54,8 +54,8 @@ class ContinuityTests(unittest.TestCase):
         b.feature_frontend=runtime.get('feature_frontend','legacy')
         b.vc_group_chunks=selected.get('vc_group_chunks',runtime.get('vc_group_chunks',1))
         b.vocoder_batch_frames=selected.get('vocoder_batch_frames',runtime.get('vocoder_batch_frames',1))
-        self.assertEqual(b.algorithmic_buffer_ms,1440)
-        self.assertEqual(selected['model_buffer_ms'],1440)
+        self.assertEqual(b.algorithmic_buffer_ms,1490)
+        self.assertEqual(selected['model_buffer_ms'],1490)
         self.assertEqual(b.vc_group_chunks,6)
         self.assertEqual(b.vocoder_batch_frames,36)
 
@@ -67,13 +67,16 @@ class ContinuityTests(unittest.TestCase):
         selected=profile(DEFAULT_VOICE_ID)
         b=MeanVC2Backend(1)
         b.load(root/'models'/selected['folder'])
-        self.assertEqual(b.algorithmic_buffer_ms,480)
+        self.assertEqual(b.algorithmic_buffer_ms,530)
         b.select_profile(selected)
         self.assertEqual(b.vc_group_chunks,6)
         self.assertEqual(b.vocoder_batch_frames,36)
         self.assertEqual(b.stats['algorithmic_buffer_ms'],b.algorithmic_buffer_ms)
         self.assertFalse(b.stats.get('human_approved_offline',False))
-        self.assertEqual(len(b.pending_audio),b.algorithmic_buffer_ms*16)
+        # pending_audio is prefilled with the decoder's delay line, which is the
+        # buffer alone: the frontend's measured 50ms rides on top of it.
+        self.assertEqual(len(b.pending_audio),b.buffer_frames_ms*16)
+        self.assertEqual(b.algorithmic_buffer_ms,b.buffer_frames_ms+b.frontend_latency_ms)
         b.warmup()
         out=b.process_chunk(np.zeros(2560,dtype=np.float32))
         self.assertEqual(out.shape,(2560,))
@@ -187,17 +190,17 @@ class ContinuityTests(unittest.TestCase):
         try:
             b.select_profile(selected)
             self.assertEqual(b.repair.alignment,b.algorithmic_buffer_ms*16)
-            self.assertEqual(b.algorithmic_buffer_ms,1440)
+            self.assertEqual(b.algorithmic_buffer_ms,1490)
             # Dropping to a single 120 ms block must shorten the buffer and the delay
             # the repair stage applies, so the two never disagree.
             b.select_profile(dict(selected,vc_group_chunks=1))
-            self.assertEqual(b.algorithmic_buffer_ms,960)
-            self.assertEqual(b.repair.alignment,960*16)
-            self.assertEqual(len(b.repair.source_delay),960*16)
+            self.assertEqual(b.algorithmic_buffer_ms,1010)
+            self.assertEqual(b.repair.alignment,1010*16)
+            self.assertEqual(len(b.repair.source_delay),1010*16)
             b.select_profile(selected)
-            self.assertEqual(b.algorithmic_buffer_ms,1440)
-            self.assertEqual(b.repair.alignment,1440*16)
-            self.assertEqual(len(b.repair.source_delay),1440*16)
+            self.assertEqual(b.algorithmic_buffer_ms,1490)
+            self.assertEqual(b.repair.alignment,1490*16)
+            self.assertEqual(len(b.repair.source_delay),1490*16)
         finally:
             b.unload()
 

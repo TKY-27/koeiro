@@ -22,7 +22,7 @@ FALLBACK_VOICE_ID = DEFAULT_VOICE_ID
 # and the 120 ms attention mask untouched.
 _GROUPED = dict(backend='meanvc2', voice=0, pitch=0., formant=0.,
                 vc_group_chunks=6, vocoder_batch_frames=36,
-                model_buffer_ms=1440, grid_delay_ms=0, extra_delay_ms=1600,
+                model_buffer_ms=1490, grid_delay_ms=0, extra_delay_ms=1600,
                 startup_chunks=6, queue_chunks=10, mute_during_startup=True,
                 optimized_condition='720ms grouped VC + 36-frame Vocos')
 

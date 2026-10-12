@@ -352,7 +352,7 @@ def test_fastest_profile_uses_single_block_decode_and_shortest_lookahead():
                                 'repair_mode': 'combined', 'repair_lookahead_hops': 2})
         assert backend.vc_group_chunks == 1
         assert backend.vocoder_batch_frames == 1
-        assert backend.algorithmic_buffer_ms == 480
+        assert backend.algorithmic_buffer_ms == 530
         assert backend.repair.lookahead_hops == 2
         assert backend.repair.stats['extra_delay_ms'] == 320
         assert backend.stats['phrase_extra_delay_ms'] == 320
