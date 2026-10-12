@@ -49,6 +49,11 @@ class AIBridge:
         self.utterance_thread = None
         self._request_timeout = 0.
         self.utterance_output_generation = -1
+        # RAM pressure is observed, never enforced: killing conversion for a
+        # busy machine stops the app exactly when it is needed most (games and
+        # the voice changer side by side). A starving worker crashes or stalls
+        # on its own, and both already fall back to Original.
+        self.ram_pressure = False
         from src.prosody.bridge import ProsodyBridge
         self.prosody = ProsodyBridge()
         self._allocate()
@@ -499,21 +504,23 @@ class AIBridge:
             else:
                 self._pending_since = 0
             stalled = self._pending_since and now-self._pending_since > self.rpc_timeout_seconds
-            resource_error=''
-            if self.parameters.delivery=='utterance' and process is not None and process.poll() is None:
+            if self.parameters.delivery=='utterance':
                 import psutil
                 try:
-                    limit=9 if self.parameters.enhancer=='mossformer' else 7 if self.parameters.enhancer=='voicefixer' else 6
-                    if psutil.Process(process.pid).memory_info().rss>limit*1024**3 or psutil.virtual_memory().available<1.5*1024**3:
-                        resource_error='発話変換のRAM上限に達したため停止しました。'
-                except psutil.Error:pass
-            if inference_expired or load_expired or crashed or stalled or resource_error:
+                    pressured = psutil.virtual_memory().available<1.5*1024**3
+                except psutil.Error:
+                    pressured = False
+                if pressured and not self.ram_pressure:
+                    log.warning('RAM pressure: %.1f GiB free; conversion continues',
+                                psutil.virtual_memory().available/1024**3)
+                self.ram_pressure = pressured
+            if inference_expired or load_expired or crashed or stalled:
                 if self._stop.is_set():
                     return  # intentional shutdown is not a worker crash
                 self.status='Error'
                 self.worker_state = 'Error'
-                self.error = (resource_error or ('AI process crashed' if crashed else 'AI stalled' if stalled else
-                              'AI inference timed out' if inference_expired else 'AI model load timed out'))
+                self.error = ('AI process crashed' if crashed else 'AI stalled' if stalled else
+                              'AI inference timed out' if inference_expired else 'AI model load timed out')
                 log.error('%s; Fallback: Original',self.error)
                 self._stop.set()
                 client=self.client
@@ -528,7 +535,7 @@ class AIBridge:
         input_stats, output_stats = self.input.snapshot(self.chunk_frames), self.output.snapshot(self.chunk_frames)
         return dict(status=self.status, error=self.error, quality=self.parameters.quality,
                     delivery=self.parameters.delivery,utterance=dict(self.utterance_stats),
-                    prosody=self.prosody.snapshot(),
+                    prosody=self.prosody.snapshot(), ram_pressure=self.ram_pressure,
                     generation=self.generation, acknowledged_generation=self.ack_generation,
                     worker_pid=getattr(getattr(self.client,'process',None),'pid',None),
                     worker_state=self.worker_state, last_response_monotonic=self.last_response,

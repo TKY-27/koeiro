@@ -283,3 +283,27 @@ def test_capped_utterance_still_holds_tail_for_its_continuation():
         assert bridge.utterance_stats.get('rejected',0)==0
     finally:bridge.stop()
     assert not bridge.alive
+
+
+def test_low_ram_is_observed_never_enforced(monkeypatch):
+    """A busy machine must not stop conversion: pressure is reported, not fatal."""
+    import psutil
+    from types import SimpleNamespace
+    from src.vc.config import AIParameters as P
+    monkeypatch.setattr(psutil, 'virtual_memory',
+                        lambda: SimpleNamespace(available=0.5 * 1024 ** 3))
+    bridge = AIBridge(P(delivery='utterance', enhancer='lavasr', experiment='natural'), FakeClient)
+    assert bridge.snapshot().get('ram_pressure') is False
+    try:
+        bridge.load();bridge.set_active(True)
+        wait(lambda:bridge.ack_generation==bridge.generation)
+        voiced = np.ones(12*bridge.chunk_frames,dtype=np.float32)*.3
+        _feed_stream(bridge, np.concatenate((voiced,np.zeros(7*bridge.chunk_frames,dtype=np.float32))))
+        wait(lambda:bridge.utterance_stats.get('completed',0)>=1,seconds=10)
+        assert bridge.status != 'Error'
+        assert 'RAM上限' not in (bridge.error or '')
+        # The 50 ms watchdog observes continuously; poll instead of assuming
+        # the last tick already happened.
+        wait(lambda: bridge.snapshot().get('ram_pressure') is True, seconds=5)
+    finally:bridge.stop()
+    assert not bridge.alive
