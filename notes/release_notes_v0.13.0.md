@@ -14,6 +14,7 @@
   一括変換の出力が入力より50 ms遅れていました。実測値をコードの前提に反映しています。
 * **実行ファイル（Koeiro.exe）で声の登録が実際に動くようになりました**
 * **RAM空き容量を変換の打ち切り条件にしないようにしました**
+* **更新の案内ダイアログで、ボタンが画面外に出なくなりました**
 
 ※ 既存の設定は引き継がれます。追加した3機能はすべて既定OFFなので、`settings.json` を作り直さない限り音は v0.12.0 と同じです。
 
@@ -65,6 +66,11 @@
 * 登録のログは書き込み可能なデータフォルダ（Windows では `%LOCALAPPDATA%\Koeiro\logs\voice-registration.log`）に出ます。失敗メッセージに実際のログパスを表示します。
 * 新規登録の基準マニフェストを標準ボイスの `runtime.json` に変更しました（開発用の参照セット `models/meanvc2_ref20` はツリーから無くなっており、そこを参照していた登録は失敗していました）。
 
+### 更新の案内ダイアログ
+
+* リリースノートが長くなると「更新して再起動」のボタンが画面下に押し出されて押せなくなっていました（v0.13.0 の本文は約6,000文字）。ノートを画面高さに応じて上限のあるスクロール欄に表示し、ボタン3つはダイアログ本体に固定しました。声の登録ダイアログと同じ作り方です。
+* マークダウンの記号（`#`・`**`・`[label](url)`）は落として読める平文にし、リリースページのURLを1行添えます。Esc は「後で」扱いになります。
+
 ### RAMプレッシャー
 
 * 「空きRAMが足りないから発話変換を停止する」という打ち切りをやめました。ゲームと一緒に使っている、いちばん動いてほしい場面でアプリを止めていたためです。空き容量は観測してログと状態（`ram_pressure`）に出すだけにしています。
@@ -104,11 +110,13 @@
 
 ### 自動テスト
 
-* `python -m pytest`（GUIはオフスクリーン）: **1159 passed, 1 failed, 11 skipped**（約8分）。
-  失敗した1件は `tests/test_text_prosody.py::test_worker_lifecycle_restart_and_no_double_start` で、
-  スイート全体を流したときだけ出るタイミング依存です。単独実行とそのファイル内実行（39 passed）では
-  どちらも緑を確認しました。スキップ11件は torch・scipy・soundfile・sherpa_onnx 未導入と
-  MeanVC2 隔離環境専用のテストによるもので、従来どおりです。
+* `python -m pytest`（GUIはオフスクリーン）: **1171 passed, 11 skipped**（7分40秒・失敗0）。
+  スキップ11件は torch・scipy・soundfile・sherpa_onnx 未導入と MeanVC2 隔離環境専用の
+  テストによるもので、従来どおりです。
+* 一つ前の実行では同じスイートで
+  `tests/test_text_prosody.py::test_worker_lifecycle_restart_and_no_double_start` が1件落ちました。
+  単独実行・そのファイル内実行では常に緑で、全体を流すときだけ出るタイミング依存です
+  （worker の起動待ちが時間切れになる方向の揺れで、音の出る経路の失敗ではありません）。
 * 追加したテスト:
   * `tests/test_leveler.py` — OFFでビット一致の素通し・小声が同一レベルに揃う・無音を持ち上げない・ゲイン上限・チェーンでの位置
   * `tests/test_ai_formant.py` — F0を動かさずに重心が上がる・利得±1 dB・Bypass・AI Voiceだけでarmingされること
@@ -117,6 +125,8 @@
   * `tests/test_ui_flow.py` — 新しい2カードの並びとlive切り替え、同時通訳ルートの状態表示
   * `tests/test_voice_library.py` / `tests/test_voice_registration.py` — 凍結ビルドでの声ライブラリと登録スクリプトの解決
   * `tests/test_meanvc2_continuity.py` — `buffer_frames_ms` / `frontend_latency_ms` の分離と 1490 ms
+  * `tests/test_update_offer.py` — 長いリリースノートでもボタンがダイアログ内に収まること
+    （`show()` 後の実座標）、マークダウンの平文化、Esc=後で、3ボタンの戻り値
   * `tests/test_prosody.py` / `tests/test_settings.py` — Feminine の範囲と新設定キーの既定値・ラウンドトリップ
 
 ### 実測値
@@ -124,6 +134,14 @@
 * AI出力のフォルマント段のアルゴリズム遅延: `algorithmic_latency_samples` = **2048 samples @ 48 kHz = 42.7 ms**（quality=low_latency、48000 Hz / 256 frames で `prepare` 後）。
 * MeanVC2 の入出力遅延: 対数エネルギー包絡の相互相関（10 msフレーム）で legacy frontend **+50 ms**（group6/36 と group1/1 の両方、＝groupingに比例しない）、aligned frontend **±0**。既知の600 msシフトを600.0 msと返して計測器を検証しています。整合度 energy_correlation: 修正前 0.79 → 修正後 **0.93**。すべてオフライン計算で、音声デバイスは開いていません。
 * 起動確認: `.venv/Scripts/python.exe app.py --smoke-test`（オフスクリーン）が終了コード0。
+
+### 実行ファイル（Windows）
+
+* `dist/Koeiro/Koeiro.exe` をこの修正のあとに再ビルド（5,206,053 bytes）。凍結exeで
+  `--smoke-test --no-splash`（オフスクリーン）が終了コード0。ビルドTOCに
+  `src.gui.update_offer` が入っていることを確認しました。
+* 更新ダイアログの実測（オフスクリーン描画・画面高800px）: 本文2,000文字でノート欄の上限320 px、
+  ダイアログ高さ354 px、3つのボタンはいずれも y=323〜343 の内側（＝画面外へ出ない）。
 
 ### 未実施
 
