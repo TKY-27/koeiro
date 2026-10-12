@@ -482,14 +482,74 @@ def test_ai_parameters_reject_denoise_outside_lavasr():
     assert AIParameters(enhancer='none', lavasr_denoise=True).lavasr_denoise is False
 
 
+def write_runtime_template(rv, assets=()):
+    """Give the redirected library the shipped standard voice's manifest to copy from.
+
+    The publisher takes its shared model entries and inference settings from that
+    voice, because it is the only manifest every build carries.
+    """
+    from src.vc.voice_library import DEFAULT_VOICE_ID
+    folder = rv.library_root()/DEFAULT_VOICE_ID
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder/'runtime.json').write_text(json.dumps(dict(
+        backend='meanvc2', preset='120ms', steps=2, default_threads=4,
+        feature_frontend='legacy', bn_interpolation='legacy', vocoder_context=36,
+        display_name='標準ボイス', human_approved_offline=True,
+        assets=list(assets)), ensure_ascii=False), 'utf-8')
+
+
+def short_report(seconds):
+    return {'retained_seconds': seconds, 'candidate_count': 1, 'accepted_count': 1,
+            'rejected': {}, 'contamination': {'flags': []}}
+
+
+def test_publish_carries_the_shared_model_entries_and_the_new_audio(tmp_path, monkeypatch):
+    import tools.register_voice as rv
+    # soundfile writes the published reference; the registration worker's own venv has
+    # it, the GUI venv does not.
+    pytest.importorskip('soundfile')
+    from src.vc.voice_library import DEFAULT_VOICE_ID
+    make_library(tmp_path, monkeypatch, 'user_'+'2'*32)
+    weight = tmp_path/'vc_models/meanvc2/repo/ckpts/vocos/vocos.pt'
+    weight.parent.mkdir(parents=True)
+    weight.write_bytes(b'weight')
+    write_runtime_template(rv, [dict(path='vc_models/meanvc2/repo/ckpts/vocos/vocos.pt',
+                                     sha256=rv.digest(weight))])
+    info = rv.publish('user_'+'2'*32, '試験の声', [np.zeros(int(4.0*16000), np.float32)],
+                      [{'offset_seconds': 0.0, 'duration_seconds': 4.0, 'quality': 0.5}],
+                      np.zeros(ve.EMBEDDING_SIZE, np.float32), [0], short_report(4.0), ['a.wav'])
+    folder = rv.library_root()/'user_'+'2'*32
+    assert (folder/'reference.wav').is_file() and (folder/'fixed_embedding.npy').is_file()
+    runtime = json.loads((folder/'runtime.json').read_text('utf-8'))
+    # The shared weight survives and the standard voice's own reference does not; the
+    # new voice is described by the settings the shipped manifest carries.
+    assert [item['path'] for item in runtime['assets']] == [
+        'vc_models/meanvc2/repo/ckpts/vocos/vocos.pt',
+        'models/user_voices/user_'+'2'*32+'/reference.wav',
+        'models/user_voices/user_'+'2'*32+'/fixed_embedding.npy']
+    assert (runtime['steps'], runtime['vocoder_context']) == (2, 36)
+    assert runtime['human_approved_offline'] is False
+    assert info['id'] != DEFAULT_VOICE_ID and info['name'] == '試験の声'
+    # The published folder is what the library then offers.
+    from src.vc.voice_library import discover
+    assert discover(tmp_path).get('user_'+'2'*32)
+
+
+def test_publish_without_the_shipped_manifest_reports_it(tmp_path, monkeypatch):
+    import tools.register_voice as rv
+    make_library(tmp_path, monkeypatch, 'user_'+'3'*32)
+    with pytest.raises(ValueError, match='基準ファイル'):
+        rv.runtime_template()
+
+
 def test_reference_length_limits_are_enforced_at_publish(tmp_path, monkeypatch):
     import tools.register_voice as rv
+    pytest.importorskip('soundfile')
     from src.vc.voice_library import MAX_REFERENCE_SECONDS
     make_library(tmp_path, monkeypatch, 'user_'+'1'*32)
-    (tmp_path/'models/meanvc2_ref20').mkdir(parents=True)
-    with pytest.raises(Exception):
+    write_runtime_template(rv)
+    with pytest.raises(ValueError, match='音声長'):
         rv.publish('user_'+'1'*32, '名', [np.zeros(int(MAX_REFERENCE_SECONDS*2*16000), np.float32)],
                    [{'offset_seconds': 0.0, 'duration_seconds': MAX_REFERENCE_SECONDS*2,
                      'quality': 0.5}], np.zeros(ve.EMBEDDING_SIZE, np.float32), [0],
-                   {'retained_seconds': MAX_REFERENCE_SECONDS*2, 'candidate_count': 1,
-                    'accepted_count': 1, 'rejected': {}, 'contamination': {'flags': []}}, ['a.wav'])
+                   short_report(MAX_REFERENCE_SECONDS*2), ['a.wav'])

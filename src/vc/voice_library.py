@@ -5,9 +5,27 @@ import math
 from pathlib import Path
 import re
 
-from ..runtime_paths import asset_root
+from ..runtime_paths import asset_root, install_root, is_frozen
 
-ROOT = asset_root()
+
+def library_root():
+    """Root holding ``models/user_voices`` for this run.
+
+    A packaged GUI bundles the shipped voice inside its own tree but runs the AI
+    worker as a plain interpreter from the installed tree, and that worker resolves
+    every voice -- and the registration the dialog writes -- there. Listing the
+    bundle instead let a packaged build register a voice the GUI never then offered,
+    so an installed tree wins and the bundle is the fallback. Unfrozen both are the
+    repository root.
+    """
+    if is_frozen():
+        installed = install_root()
+        if (installed/'models'/'user_voices').is_dir():
+            return installed
+    return asset_root()
+
+
+ROOT = library_root()
 VOICE_ID = re.compile(r'user_[0-9a-f]{32}\Z')
 # The voice this build ships and starts on. It is listed first in the voice combo
 # under the app's own label rather than the id it was registered with, and the
@@ -80,7 +98,7 @@ def discover(root=ROOT):
                 backend='meanvc2', user_voice=True, phrase_repair=True,
                 standard=identifier == DEFAULT_VOICE_ID,
                 vc_group_chunks=6, vocoder_batch_frames=36,
-                model_buffer_ms=1440, grid_delay_ms=0, extra_delay_ms=1600,
+                model_buffer_ms=1490, grid_delay_ms=0, extra_delay_ms=1600,
                 startup_chunks=6, queue_chunks=10, mute_during_startup=True,
                 optimized_condition='user voice: 720ms grouped VC + 36-frame Vocos',
                 voice=0, pitch=0., formant=0.)

@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 import numpy as np
 
 from src.vc import voice_embedding, voice_quality
-from src.vc.voice_library import MAX_PROFILE_BYTES, MAX_REFERENCE_SECONDS, digest
+from src.vc.voice_library import DEFAULT_VOICE_ID, MAX_PROFILE_BYTES, MAX_REFERENCE_SECONDS, digest
 from src.vc.voice_library import folder_for as _validated_folder
 
 # Kept long enough to analyse whole recordings, short enough to stay bounded. The
@@ -123,6 +123,20 @@ def library_root():
 
 def bundle_path(identifier):
     return library_root()/(BUNDLE_PREFIX+identifier)
+
+
+def runtime_template():
+    """The shipped standard voice's manifest, which every new voice is written from.
+
+    The development reference sets (``models/meanvc2_ref20`` and friends) left the
+    tree in v0.11.0, so the standard voice is now the one manifest every build
+    carries. Only its shared ``vc_models/`` entries are reused; the standard voice's
+    own reference and embedding are replaced by the new ones below.
+    """
+    path = _validated_folder(DEFAULT_VOICE_ID, ROOT)/'runtime.json'
+    if not path.is_file():
+        raise ValueError('声の設定の基準ファイルが無いため、登録できません。')
+    return path
 
 
 def encode_selection(parts, selections, torch, encoder, passes=None,
@@ -264,7 +278,7 @@ def publish(identifier, name, parts, selections, embedding, keep, report, source
         reference = np.concatenate(parts) if len(parts) > 1 else parts[0]
         sf.write(staging/'reference.wav', reference, 16000, subtype='PCM_16')
         np.save(staging/'fixed_embedding.npy', np.asarray(embedding, dtype=np.float32), allow_pickle=False)
-        original = json.loads((ROOT/'models/meanvc2_ref20/runtime.json').read_text('utf-8'))
+        original = json.loads(runtime_template().read_text('utf-8'))
         assets = [asset.copy() for asset in original['assets'] if asset['path'].startswith('vc_models/')]
         for asset in assets:
             path = (ROOT/asset['path']).resolve()

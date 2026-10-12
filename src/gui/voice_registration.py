@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QHBox
     QVBoxLayout, QWidget, QSizePolicy)
 
 from src.vc.client import worker_python
+from src.runtime_paths import data_dir, install_root
 from src.vc.voice_library import ROOT
 
 # Accepted by decodability rather than by suffix, so the dialog must not imply a
@@ -23,6 +24,28 @@ FILE_FILTER = ('音声ファイル (*.wav *.mp3 *.m4a *.flac *.ogg *.oga *.aac *
                '*.opus *.aiff *.aif *.mp4 *.webm);;すべてのファイル (*)')
 MAX_REPORTED_CLIPS = 12
 DETAIL_HEIGHT = 200
+LOG_NAME = 'voice-registration.log'
+
+
+def worker_script():
+    """The registration worker this build can actually run, or None when it has none.
+
+    A packaged GUI bundles the app but not ``tools/``: the script sits in the installed
+    tree the AI environment was set up beside (``install_root``), which is also where
+    the encoder it loads lives. Launching the bundle-relative path anyway made the
+    interpreter exit with ``can't open file`` and the dialog report only a generic
+    failure.
+    """
+    for root in (ROOT, install_root()):
+        candidate = Path(root)/'tools/register_voice.py'
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def log_path():
+    """Where the worker's output goes: the writable data directory, never the bundle."""
+    return data_dir()/'logs'/LOG_NAME
 
 
 def format_report(report):
@@ -288,18 +311,21 @@ class VoiceRegistrationDialog(QDialog):
         if not self.ready():
             self.status.setText('変換Workerの停止を待っています。少し待ってから登録してください。')
             return
+        script = worker_script()
+        if script is None:
+            self.status.setText('登録用のプログラムが見つかりません。AI環境をセットアップし直してください。')
+            return
+        root = script.parents[1]
         try:
-            import psutil
-            if psutil.virtual_memory().available < 2.5*1024**3:
-                raise RuntimeError('空きRAMが不足しています。他の重いアプリを閉じてから登録してください。')
-            executable, environment = worker_python(ROOT)
+            executable, environment = worker_python(root)
             qt_environment = QProcessEnvironment()
             for key, value in environment.items():
                 qt_environment.insert(key, value)
             qt_environment.insert('PYTHONIOENCODING', 'utf-8')
             qt_environment.insert('PYTHONDONTWRITEBYTECODE', '1')
-            (ROOT/'logs').mkdir(exist_ok=True)
-            self.log_file = (ROOT/'logs/voice-registration.log').open('ab', buffering=0)
+            log = log_path()
+            log.parent.mkdir(parents=True, exist_ok=True)
+            self.log_file = log.open('ab', buffering=0)
             self.buffer = b''
             self.last_error = ''
             self.cancel_requested = False
@@ -307,7 +333,7 @@ class VoiceRegistrationDialog(QDialog):
             self.pending_row = None
             process = QProcess(self)
             process.setProcessEnvironment(qt_environment)
-            process.setWorkingDirectory(str(ROOT))
+            process.setWorkingDirectory(str(root))
             process.readyReadStandardOutput.connect(self.read_output)
             process.readyReadStandardError.connect(self.read_error)
             process.finished.connect(self.process_finished)
@@ -320,7 +346,7 @@ class VoiceRegistrationDialog(QDialog):
             self.progress.setRange(0, 0)
             self.progress.show()
             self.status.setText('準備しています…')
-            process.start(str(executable), ['-u', str(ROOT/'tools/register_voice.py')] + arguments)
+            process.start(str(executable), ['-u', str(script)] + arguments)
             self.watchdog.start()
         except (OSError, RuntimeError, ImportError) as error:
             self.status.setText(str(error))
@@ -468,7 +494,8 @@ class VoiceRegistrationDialog(QDialog):
                 return
         self.registered_id = None
         self.progress.hide()
-        self.status.setText(self.last_error or '登録に失敗しました。logs/voice-registration.logを確認してください。')
+        self.status.setText(self.last_error or '登録に失敗しました。{}を確認してください。'
+                            .format(log_path()))
         for widget in (self.file_button, self.name, self.add_to, self.voice_picker):
             widget.setEnabled(True)
         self.cancel_button.setText('閉じる')
@@ -489,18 +516,9 @@ class VoiceRegistrationDialog(QDialog):
     def check_resources(self):
         if self.process is None or not self.process.processId():
             return
-        import psutil
-        try:
-            process = psutil.Process(self.process.processId())
-            memory = sum(p.memory_info().rss for p in [process]+process.children(recursive=True))
-            if memory > 4.5*1024**3 or psutil.virtual_memory().available < 1.25*1024**3:
-                self.last_error = 'RAM使用量が上限に達したため、登録を停止しました。'
-                self.terminate_worker()
-            elif time.monotonic()-self.started > 900:
-                self.last_error = '登録が15分以内に完了しなかったため、処理を停止しました。'
-                self.terminate_worker()
-        except psutil.Error:
-            pass
+        if time.monotonic()-self.started > 900:
+            self.last_error = '登録が15分以内に完了しなかったため、処理を停止しました。'
+            self.terminate_worker()
 
     def terminate_worker(self):
         if self.process is None:

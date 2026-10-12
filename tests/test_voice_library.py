@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 from types import SimpleNamespace
 
@@ -196,6 +197,7 @@ def test_registration_worker_protocol_reports_unicode_and_recovers_from_failure(
               f'"identifier":{json.dumps(identifier)}}}),flush=True)\n')
     (tools/'register_voice.py').write_text(script, 'utf-8')
     monkeypatch.setattr(gui, 'ROOT', tmp_path)
+    monkeypatch.setattr(gui, 'data_dir', lambda: tmp_path)
     monkeypatch.setattr(gui, 'worker_python', lambda *_: (sys.executable, os.environ.copy()))
     monkeypatch.setattr(psutil, 'virtual_memory', lambda: SimpleNamespace(available=16*1024**3))
     dialog = gui.VoiceRegistrationDialog()
@@ -230,6 +232,7 @@ def test_registration_reports_a_failure_and_keeps_the_dialog_usable(tmp_path, mo
               'print(json.dumps({"error":"音割れが多い音声です"},ensure_ascii=False),flush=True)\nsys.exit(1)\n')
     (tools/'register_voice.py').write_text(script, 'utf-8')
     monkeypatch.setattr(gui, 'ROOT', tmp_path)
+    monkeypatch.setattr(gui, 'data_dir', lambda: tmp_path)
     monkeypatch.setattr(gui, 'worker_python', lambda *_: (sys.executable, os.environ.copy()))
     monkeypatch.setattr(psutil, 'virtual_memory', lambda: SimpleNamespace(available=16*1024**3))
     dialog = gui.VoiceRegistrationDialog()
@@ -260,6 +263,70 @@ def test_unpublished_bundle_is_removed_when_the_dialog_is_cancelled(tmp_path):
     assert not bundle.exists()
     assert dialog.result() == dialog.DialogCode.Rejected
     dialog.deleteLater()
+
+
+def test_registration_worker_script_is_found_in_the_installed_tree(tmp_path, monkeypatch):
+    """A packaged GUI bundles no ``tools/``, so the worker comes from the installed tree.
+
+    The bundle's own root is still tried first: unfrozen, and in any build that does
+    ship the script, that is the tree the library lives in.
+    """
+    from src.gui import voice_registration as gui
+    bundle = tmp_path/'_internal'
+    bundle.mkdir()
+    installed = tmp_path/'Koeiro'
+    (installed/'tools').mkdir(parents=True)
+    script = installed/'tools/register_voice.py'
+    script.write_text('# fixture', 'utf-8')
+    monkeypatch.setattr(gui, 'ROOT', bundle)
+    monkeypatch.setattr(gui, 'install_root', lambda: installed)
+    assert gui.worker_script() == script
+    # A bundle that does carry the script keeps using it.
+    (bundle/'tools').mkdir()
+    shipped = bundle/'tools/register_voice.py'
+    shipped.write_text('# fixture', 'utf-8')
+    assert gui.worker_script() == shipped
+    # Neither tree has one: the dialog must say so instead of launching a missing file
+    # and reporting a generic failure.
+    monkeypatch.setattr(gui, 'ROOT', tmp_path/'nowhere')
+    monkeypatch.setattr(gui, 'install_root', lambda: tmp_path/'also-nowhere')
+    assert gui.worker_script() is None
+
+
+def test_dialog_stops_before_launching_a_missing_worker(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from src.gui import voice_registration as gui
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(gui, 'ROOT', tmp_path)
+    monkeypatch.setattr(gui, 'install_root', lambda: tmp_path)
+    monkeypatch.setattr(gui, 'worker_python',
+                        lambda *_: (_ for _ in ()).throw(AssertionError('must not launch')))
+    dialog = gui.VoiceRegistrationDialog()
+    try:
+        dialog.set_sources([str(tmp_path/'声.wav')])
+        dialog.name.setText('試験の声')
+        dialog.on_submit()
+        assert dialog.process is None
+        assert '見つかりません' in dialog.status.text()
+    finally:
+        dialog.deleteLater()
+
+
+def test_voice_library_follows_the_installed_tree_when_packaged(tmp_path, monkeypatch):
+    """Registration writes where the AI worker reads, so the listing has to follow it."""
+    from src.vc import voice_library
+    bundle, installed = tmp_path/'_internal', tmp_path/'tree'
+    (installed/'models'/'user_voices').mkdir(parents=True)
+    monkeypatch.setattr(voice_library, 'is_frozen', lambda: True)
+    monkeypatch.setattr(voice_library, 'asset_root', lambda: bundle)
+    monkeypatch.setattr(voice_library, 'install_root', lambda: installed)
+    assert voice_library.library_root() == installed
+    # A standalone bundle with no installed tree keeps reading its own copy, so the
+    # shipped voice is still offered.
+    shutil.rmtree(installed/'models'/'user_voices')
+    assert voice_library.library_root() == bundle
+    monkeypatch.setattr(voice_library, 'is_frozen', lambda: False)
+    assert voice_library.library_root() == bundle
 
 
 def test_selected_voice_button_activates_ai_without_changing_voice(ai_window):
