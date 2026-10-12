@@ -18,6 +18,18 @@ def test_settings_roundtrip(tmp_path):
     assert not (tmp_path / "nested" / "settings.json.tmp").exists()
 
 
+def test_finish_formant_and_level_settings_fall_back():
+    from src.settings.manager import AppSettings
+    settings = AppSettings.from_dict({"finish": "yes", "ai_formant_on": 1,
+                                      "ai_formant": 99, "auto_level": "yes"})
+    assert settings.finish is False
+    assert settings.ai_formant_on is False and settings.ai_formant == 2.0
+    assert settings.auto_level is False
+    assert AppSettings().finish is False
+    assert AppSettings().ai_formant_on is False
+    assert AppSettings().auto_level is False
+
+
 @pytest.mark.parametrize("text", ["", "broken", "[]", "null", "42", "{", '{"gain_db": NaN}',
                                    '{"buffer_size": true}', '{"sample_rate": "48000"}'])
 def test_corrupt_or_invalid_settings(tmp_path, text):

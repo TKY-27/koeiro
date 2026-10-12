@@ -136,6 +136,42 @@ def test_the_finish_card_conditions_converted_output_only(ai_window):
     assert window.controller.engine.chain.finish.enabled is False
 
 
+def test_the_ai_formant_card_lifts_only_the_ai_route(ai_window):
+    """The ② band's formant card wires the native post stage and persists."""
+    app, window, backend, bridge = ai_window
+    window._open_drawer('tune')
+    pump(app, lambda: window.drawer_tune.isVisible())
+    chain = window.controller.engine.chain
+    assert window.ai_formant_toggle.isVisible() and window.ai_formant_toggle.isEnabled()
+    assert chain.ai_formant_enabled is False
+    window.ai_formant_toggle.setChecked(True)
+    window.ai_formant_amount.setValue(30)
+    app.processEvents()
+    assert chain.ai_formant_enabled is True
+    assert chain.ai_formant_semitones == pytest.approx(3.0)
+    window._capture_settings()
+    assert window.settings.ai_formant_on is True
+    assert window.settings.ai_formant == pytest.approx(3.0)
+    window.ai_formant_toggle.setChecked(False)
+    app.processEvents()
+    assert chain.ai_formant_enabled is False
+
+
+def test_the_auto_level_card_rides_the_input(ai_window):
+    """The input card's leveller wires the chain head and persists."""
+    app, window, backend, bridge = ai_window
+    window._open_drawer('tune')
+    pump(app, lambda: window.drawer_tune.isVisible())
+    chain = window.controller.engine.chain
+    assert window.auto_level_toggle.isVisible() and window.auto_level_toggle.isEnabled()
+    assert chain.leveler.enabled is False
+    window.auto_level_toggle.setChecked(True)
+    app.processEvents()
+    assert chain.leveler.enabled is True
+    window._capture_settings()
+    assert window.settings.auto_level is True
+
+
 def test_the_translate_route_is_selectable_and_described(ai_window):
     """The 4th route names itself and leaves the DSP parameters valid."""
     app, window, backend, bridge = ai_window
@@ -148,6 +184,50 @@ def test_the_translate_route_is_selectable_and_described(ai_window):
     window._tick()
     assert not window.translate_driver.alive
     assert 'Start' in window.translate_live_status.text()
+
+
+def test_the_translate_banner_names_the_next_step(ai_window):
+    """The big line follows the translation driver, not the parked VC bridge."""
+    from unittest import mock
+    app, window, backend, bridge = ai_window
+    window.mode.setCurrentIndex(window.mode.findData('translate'))
+    app.processEvents()
+    engine = window.controller.engine
+    driver = window.translate_driver
+    try:
+        # Master switch off: a step, not a dead end.
+        state, detail = window._translate_readiness()
+        assert state == 'stopped' and '実験機能有効' in detail
+        window.lab_enabled.setChecked(True)
+        # Provider still off: again a step.
+        state, detail = window._translate_readiness()
+        assert state == 'stopped' and '合成' in detail
+        window.translate_provider.setCurrentIndex(
+            window.translate_provider.findData('kokoro'))
+        app.processEvents()
+        # Parked while stopped.
+        state, detail = window._translate_readiness()
+        assert state == 'stopped' and 'Start' in detail
+        # Faking a running engine: the banner now tracks the driver.
+        engine._stream = object()
+        state, detail = window._translate_readiness()
+        assert state == 'loading'
+        thread = mock.Mock()
+        thread.is_alive = lambda: True
+        driver._thread = thread
+        window._update_ai_readiness()
+        assert window.ai_banner.property('state') == 'ready'
+        assert '聞き取っています' in window.ai_banner_note.text()
+        driver._status.update(heard='こんにちは', said='<en>konnichiwa')
+        window._update_ai_readiness()
+        assert 'こんにちは' in window.ai_banner_note.text()
+        driver._status.update(error='boom', running=False)
+        window._update_ai_readiness()
+        assert window.ai_banner.property('state') == 'error'
+        assert 'boom' in window.ai_banner_note.text()
+    finally:
+        engine._stream = None
+        driver._thread = None
 
 
 def test_the_stage_names_the_live_voice_and_route(ai_window):
@@ -381,7 +461,7 @@ def test_the_drawer_search_keeps_only_what_matches(ai_window):
     drawer = window.drawer_tune
     window._open_drawer('tune')
     pump(app, lambda: drawer.isVisible())
-    assert len(_visible_titles(drawer)) == 14
+    assert len(_visible_titles(drawer)) == 15
     drawer.search.setText('モニター')
     app.processEvents()
     assert _visible_titles(drawer) == ['モニター（変換後の音を自分の耳で確認）']
@@ -397,7 +477,7 @@ def test_the_drawer_search_keeps_only_what_matches(ai_window):
     # Emptying the box brings the whole surface back.
     drawer.search.clear()
     app.processEvents()
-    assert len(_visible_titles(drawer)) == 14
+    assert len(_visible_titles(drawer)) == 15
     assert all(band.isVisible() for band in bands)
     assert not drawer.search_empty.isVisible()
 
@@ -595,7 +675,8 @@ def test_every_card_sits_under_the_band_that_names_it(ai_window):
         '音の規格（Sample Rate / Buffer）']
     assert _card_headings(bands[1]) == [
         '入力の整え（音量とノイズ）', '声と話し方を選ぶ', '声の加工（Female DSP）',
-        '声の微調整（一括変換）', '抑揚補正（Prosody）', '出力の仕上げ（自然さ）']
+        '声の微調整（一括変換）', '抑揚補正（Prosody）', '出力の仕上げ（自然さ）',
+        'AI出力のフォルマント']
     assert _card_headings(bands[2]) == [
         'シーン（設定プロファイル）', 'アプリの更新', 'Discordのアクティビティ表示',
         '診断（実測値）']

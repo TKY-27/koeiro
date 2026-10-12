@@ -95,7 +95,7 @@ def test_invalid_floor(floor_db):
 
 def test_chain_carries_a_denoise_stage_that_is_off_by_default():
     chain = ProcessorChain()
-    assert chain.pre_processors[0] is chain.denoise
+    assert chain.pre_processors[1] is chain.denoise
     assert chain.denoise.strength == 0.0
     chain.prepare(RATE, 256)
     # Let the gate finish opening, so the only stage under test is the passive one.

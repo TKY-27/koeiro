@@ -158,3 +158,13 @@ class AudioController:
     def set_finish(self, enabled):
         """Live, in-place: the stage eases its gain back to unity when switched off."""
         self.engine.chain.finish.enabled = bool(enabled)
+
+    def set_ai_formant(self, enabled, semitones):
+        """Live, in-place: the native stage morphs coefficients without reallocating."""
+        chain = self.engine.chain
+        chain.ai_formant_enabled = bool(enabled)
+        chain.ai_formant_semitones = float(semitones)
+
+    def set_auto_level(self, enabled):
+        """Live, in-place: the follower eases from unity, so no step on switch."""
+        self.engine.chain.leveler.enabled = bool(enabled)

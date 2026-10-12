@@ -417,6 +417,15 @@ class MainWindow(QMainWindow):
         self.denoise_strength.valueChanged.connect(self._denoise_changed)
         self.denoise_strength_label.setText(f'{self.denoise_strength.value()/100:.2f}')
         self._denoise_changed()
+        # Optional input levelling, applied live like the gate. Small voices
+        # come up to the level the model grips best; silence is never boosted.
+        self.auto_level_toggle = QCheckBox('音量の自動均一化（小声を持ち上げる）')
+        self.auto_level_toggle.setChecked(self.settings.auto_level)
+        self.auto_level_toggle.setToolTip('入力を一定の音量にそろえます（無音は上げません）。\n'
+                                          '既定はOFF。停止中でも変換中でも切替できます。')
+        self.auto_level_toggle.toggled.connect(self._auto_level_changed)
+        level_section.addWidget(self.auto_level_toggle)
+        self._auto_level_changed()
 
         # --- 調整 ②: the voice and the way of talking -----------------------------
         sound_column = self._section(self.band_convert.body, '声と話し方を選ぶ')
@@ -546,6 +555,7 @@ class MainWindow(QMainWindow):
         self._build_ai_details(self.band_convert.body)
         self._build_prosody_section(self.band_convert.body)
         self._build_finish_section(self.band_convert.body)
+        self._build_ai_formant_section(self.band_convert.body)
 
         # --- 調整 ③ アプリ: saving and managing ----------------------------------
         self.band_app = self._band(tune_layout, '⚙️ ', '③', 'アプリ',
@@ -666,19 +676,23 @@ class MainWindow(QMainWindow):
             self.edge_resize = None
 
     def _update_ai_readiness(self):
-        """Say whether the AI voice is ready, from the bridge's own state.
+        """Say whether the selected route is ready, from its own live state.
 
         The stage states the fact before a Start needs it: not loaded, loading, ready,
         error, or the two states where it will not be used at all (a sample rate other
         than 48 kHz, or a machine where the model cannot load). Nothing here estimates
-        progress; the bridge reports states, so states are all that is shown. The one
-        place it is stated is the big line above the stage foot.
+        progress; the route reports states, so states are all that is shown. The one
+        place it is stated is the big line above the stage foot. The translate route
+        reports the translation driver instead of the voice bridge, which stays
+        parked there by design.
         """
         from .shell import AiReadiness
         if not hasattr(self, 'ai_banner'):
             return
         if self.router is None:
             state, detail = 'unavailable', None
+        elif self.mode.currentData() == 'translate':
+            state, detail = self._translate_readiness()
         else:
             bridge = self.router.ai.bridge
             supported = bool(getattr(self.router.ai, 'supported', True))
@@ -705,6 +719,38 @@ class MainWindow(QMainWindow):
             self.ai_banner.setProperty('state', state)
             self.ai_banner.style().unpolish(self.ai_banner)
             self.ai_banner.style().polish(self.ai_banner)
+
+    def _translate_readiness(self):
+        """The translate route's readiness, from the translation driver.
+
+        The voice bridge stays parked on this route by design, so its Stopped
+        state would wrongly claim nothing is ready. Every branch names the next
+        concrete step instead.
+        """
+        if self.rate.currentData() != 48000:
+            return ('fallback', '同時通訳は48 kHz専用です。Sample Rateを48000 Hzにしてください。')
+        if not self.lab_enabled.isChecked():
+            return ('stopped', '「実験」の「実験機能有効」をONにすると同時通訳が動きます。')
+        if self._capture_lab().translation_provider == 'off':
+            return ('stopped', '「実験」の②で合成（Kokoro）を選ぶと同時通訳が動きます。')
+        driver = getattr(self, 'translate_driver', None)
+        status = driver.status if driver is not None else {}
+        if status.get('error'):
+            return ('error', f'同時通訳エラー: {status["error"]}')
+        if not self.controller.engine.running:
+            return ('stopped', 'Startを押すと同時通訳が始まります（文単位・遅延大）。')
+        if not driver.alive:
+            return ('loading', '同時通訳を準備しています…')
+        if status.get('asr') in ('Loading', 'Starting', 'preparing'):
+            return ('loading', '音声認識を読込中…しばらくお待ちください。')
+        heard, said = status.get('heard', ''), status.get('said', '')
+        if said:
+            return ('ready', f'「{heard}」→「{said}」')
+        if heard:
+            return ('ready', f'「{heard}」を翻訳・合成しています…')
+        if status.get('mic_silent'):
+            return ('ready', 'マイクの音が来ていません。入力デバイスと音量を確認してください。')
+        return ('ready', '聞き取っています…文を言い切ってください。')
 
     def resizeEvent(self, event):
         """Open drawers follow the right edge; no widget is positioned by hand."""
@@ -1266,6 +1312,7 @@ class MainWindow(QMainWindow):
         lab = self._capture_lab()
         armed = (self.controller.engine.running
                  and self.mode.currentData() == 'translate'
+                 and self.rate.currentData() == 48000
                  and self.lab_enabled.isChecked()
                  and lab.translation_provider != 'off')
         if armed and not driver.alive:
@@ -1312,6 +1359,7 @@ class MainWindow(QMainWindow):
         except ValueError:
             asr_params = None
         if asr_params is None:
+            self.translate_live_status.setText('音声認識の設定が壊れています: 抑揚補正を見直してください。')
             return
         driver.start(asr_params, build, voice=voice)
         self._render_translation_status(driver.status, True, lab)
@@ -1334,6 +1382,9 @@ class MainWindow(QMainWindow):
                 f'「{heard}」→「{said}」· 待機 {status.get("queued_seconds", 0)}秒')
         elif heard:
             self.translate_live_status.setText(f'「{heard}」を翻訳・合成しています…')
+        elif status.get('mic_silent'):
+            self.translate_live_status.setText(
+                'マイクの音が来ていません。入力デバイスと音量を確認してください。')
         else:
             self.translate_live_status.setText(
                 f'聞き取っています（ASR: {status.get("asr", "?")}）…文を言い切ってください。')
@@ -1642,6 +1693,42 @@ class MainWindow(QMainWindow):
             return
         if not self._closing:
             self.controller.set_finish(self.finish_toggle.isChecked())
+
+    def _build_ai_formant_section(self, layout):
+        """Brighten the AI output toward a feminine vocal tract, pitch untouched.
+
+        A standard card, off by default like the denoise stage: it reshapes the
+        voice, so the choice belongs to the reader. The lift applies to the AI
+        route only (Original, Female DSP and translate pass by), adds the native
+        stage's lookahead to the route while on, and switches live because the
+        native engine morphs coefficients without reallocating.
+        """
+        column = self._section(layout, 'AI出力のフォルマント')
+        note = QLabel('AIの声の高さは変えず、声の明るさだけ上げます（既定+2.0）。\n'
+                      'AI Voiceにだけ掛かります。効き目の聴感確認はお使いの耳でお願いします。')
+        note.setObjectName('muted')
+        note.setWordWrap(True)
+        column.addWidget(note)
+        self.ai_formant_toggle = QCheckBox('フォルマントを持ち上げる（AIのみ）')
+        self.ai_formant_toggle.setChecked(self.settings.ai_formant_on)
+        self.ai_formant_toggle.setToolTip('共振を高域へ寄せ、女声らしく明るくします。\n'
+                                          '既定はOFF。停止中でも変換中でも切替できます。')
+        self.ai_formant_toggle.toggled.connect(self._ai_formant_changed)
+        column.addWidget(self.ai_formant_toggle)
+        self.ai_formant_amount, self.ai_formant_amount_label = self._slider(
+            column, '持ち上げ量', 0, 60, round(self.settings.ai_formant * 10))
+        self.ai_formant_amount.valueChanged.connect(self._ai_formant_changed)
+        self.ai_formant_amount_label.setText(f'+{self.ai_formant_amount.value()/10:.1f} st')
+        self._ai_formant_changed()
+
+    def _ai_formant_changed(self, *_):
+        """Live: the native stage morphs coefficients, so no restart is needed."""
+        if not hasattr(self, 'ai_formant_toggle'):
+            return
+        self.ai_formant_amount_label.setText(f'+{self.ai_formant_amount.value()/10:.1f} st')
+        if not self._closing:
+            self.controller.set_ai_formant(self.ai_formant_toggle.isChecked(),
+                                           self.ai_formant_amount.value() / 10)
 
     def _build_prosody_section(self, layout):
         column = self._section(layout, '抑揚補正（Prosody）')
@@ -2849,6 +2936,13 @@ class MainWindow(QMainWindow):
         if not self._closing:
             self.controller.set_denoise(self.denoise_strength.value()/100 if enabled else 0.0)
 
+    def _auto_level_changed(self, *_):
+        """Live: the follower eases from unity, so the stream never needs a restart."""
+        if not hasattr(self, 'auto_level_toggle'):
+            return
+        if not self._closing:
+            self.controller.set_auto_level(self.auto_level_toggle.isChecked())
+
     def _build_hotkeys(self):
         """In-app shortcuts for instant route switching.
 
@@ -3042,7 +3136,10 @@ class MainWindow(QMainWindow):
         self.gate.setValue(round(settings.noise_gate_db * 10))
         self.denoise_toggle.setChecked(settings.denoise)
         self.denoise_strength.setValue(round(settings.denoise_strength * 100))
+        self.auto_level_toggle.setChecked(settings.auto_level)
         self.finish_toggle.setChecked(settings.finish)
+        self.ai_formant_toggle.setChecked(settings.ai_formant_on)
+        self.ai_formant_amount.setValue(round(settings.ai_formant * 10))
         voice_index = self.ai_model.findData(settings.ai_model)
         if voice_index >= 0:
             self.ai_model.setCurrentIndex(voice_index)
@@ -3501,7 +3598,11 @@ class MainWindow(QMainWindow):
             denoise=self.denoise_toggle.isChecked() if hasattr(self, 'denoise_toggle') else self.settings.denoise,
             denoise_strength=(self.denoise_strength.value() / 100 if hasattr(self, 'denoise_strength')
                               else self.settings.denoise_strength),
+            auto_level=self.auto_level_toggle.isChecked() if hasattr(self, 'auto_level_toggle') else self.settings.auto_level,
             finish=self.finish_toggle.isChecked() if hasattr(self, 'finish_toggle') else self.settings.finish,
+            ai_formant_on=self.ai_formant_toggle.isChecked() if hasattr(self, 'ai_formant_toggle') else self.settings.ai_formant_on,
+            ai_formant=(self.ai_formant_amount.value() / 10 if hasattr(self, 'ai_formant_amount')
+                        else self.settings.ai_formant),
             window_size=(self.width(), self.height()),
             window_position=(self.x(), self.y()))
         parameters = self._dsp_parameters()

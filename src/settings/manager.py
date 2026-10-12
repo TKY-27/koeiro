@@ -47,6 +47,11 @@ class AppSettings:
     denoise_strength: float = 0.6
     # Off by default: output conditioning is a user choice, not the shipped route.
     finish: bool = False
+    # Off by default: brightening the AI output reshapes the voice.
+    ai_formant_on: bool = False
+    ai_formant: float = 2.0
+    # Off by default: riding the input level reshapes quiet takes.
+    auto_level: bool = False
     monitor: bool = False
     monitor_device: dict | None = None
     monitor_volume_db: float = 0.0
@@ -145,6 +150,11 @@ class AppSettings:
         values["denoise_strength"] = _number(data.get("denoise_strength"), 0.6, 0, 1)
         finish = data.get("finish")
         values["finish"] = finish if type(finish) is bool else False
+        formant_on = data.get("ai_formant_on")
+        values["ai_formant_on"] = formant_on if type(formant_on) is bool else False
+        values["ai_formant"] = _number(data.get("ai_formant"), 2.0, 0, 6)
+        auto_level = data.get("auto_level")
+        values["auto_level"] = auto_level if type(auto_level) is bool else False
         monitor = data.get("monitor")
         values["monitor"] = monitor if type(monitor) is bool else False
         values["monitor_device"] = _device(data.get("monitor_device"))
