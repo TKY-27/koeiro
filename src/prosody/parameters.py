@@ -19,10 +19,15 @@ PRESETS = {
         ending_strength=.35, energy_dynamics=.26, min_pitch=-1.0, max_pitch=1.3, attack_ms=55., release_ms=90.),
     'Sad': dict(range_expansion=.20, rise_boost=.06, fall_boost=.18, onset_lift=.10,
         ending_strength=.10, energy_dynamics=.08, min_pitch=-.5, max_pitch=.35, attack_ms=100., release_ms=150.),
+    # Feminine: wide range with lifted endings for a brighter feminine read. Same
+    # bounded knobs as every other preset; no new machinery, default off (the
+    # preset only applies when Auto Intonation is enabled and selected).
+    'Feminine': dict(range_expansion=.60, rise_boost=.40, fall_boost=.12, onset_lift=.45,
+        ending_strength=.40, energy_dynamics=.22, min_pitch=-.6, max_pitch=1.4, attack_ms=60., release_ms=100.),
 }
 # Which presets are emotions rather than characters, so the UI can group them.
 EMOTION_PRESETS = ('Calm', 'Gentle', 'Energetic', 'Sad')
-CHARACTER_PRESETS = ('Natural', 'Anime Light', 'Anime Expressive')
+CHARACTER_PRESETS = ('Natural', 'Anime Light', 'Anime Expressive', 'Feminine')
 
 
 

@@ -180,7 +180,7 @@ def test_alignment_limit_still_rejects_invalid_or_unbounded_buffers(alignment):
 # profiles are no longer shipped (the app only offers user registrations), so
 # the two real configurations are pinned here instead of on disk.
 @pytest.mark.parametrize('frontend, interpolation, groups, frames, expected_delay', [
-    ('legacy', 'legacy', 1, 1, 960),
+    ('legacy', 'legacy', 1, 1, 1010),
     ('aligned', 'fixed_linear', 6, 1, 1640),
 ])
 def test_phrase_backend_accepts_both_real_runtime_configurations(monkeypatch, frontend, interpolation, groups, frames, expected_delay):

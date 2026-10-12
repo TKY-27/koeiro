@@ -4,7 +4,7 @@ import math
 
 class TextModifier:
     strengths={'Natural':(.20,.15,.15),'Anime Light':(.50,.45,.40),
-               'Anime Expressive':(.80,.75,.70),'Custom':(.50,.45,.40)}
+               'Anime Expressive':(.80,.75,.70),'Feminine':(.70,.60,.55),'Custom':(.50,.45,.40)}
 
     def __init__(self): self.reset()
 

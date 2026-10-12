@@ -154,7 +154,7 @@ class TextProsodyEventEngine:
             if k in self.events and self.events[k] in active),None)
         self.direction=self.minimum=0.; self.waterfall={}
         if not active or not good or not enabled: return 0.,0.,1.,1.,1.
-        desired_level={'Natural':.5,'Anime Light':1.,'Anime Expressive':2.,'Custom':1.}[p.preset]
+        desired_level={'Natural':.5,'Anime Light':1.,'Anime Expressive':2.,'Feminine':1.75,'Custom':1.}[p.preset]
         self.preset_level=desired_level if self.preset_level is None else self.preset_level+(1-math.exp(-dt/.08))*(desired_level-self.preset_level)
         level=self.preset_level
         amount=min(1.5,p.amount/60)*p.text_influence/100

@@ -13,7 +13,7 @@ def context_freshness(age_ms):
 
 class CalibratedTextModifier:
     envelopes={'SILENCE':0.,'ONSET':.05,'EARLY':.20,'MIDDLE':.45,'LATE':.75,'ENDING_CANDIDATE':1.}
-    limits={'Natural':.125,'Anime Light':.250,'Anime Expressive':.500,'Custom':.250}
+    limits={'Natural':.125,'Anime Light':.250,'Anime Expressive':.500,'Feminine':.400,'Custom':.250}
 
     def __init__(self): self.reset()
 

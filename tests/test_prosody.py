@@ -19,6 +19,21 @@ def test_presets(name):
     assert p.min_pitch==PRESETS[name]['min_pitch'] and p.max_pitch==PRESETS[name]['max_pitch']
 
 
+def test_feminine_preset_is_wired_everywhere_it_must_be():
+    """A preset name alone does nothing: every map that keys on it must know it."""
+    from src.prosody.parameters import CHARACTER_PRESETS
+    from src.prosody.calibration import CalibratedTextModifier
+    from src.prosody.events import TextProsodyEventEngine
+    from src.prosody.text_modifier import TextModifier
+    assert 'Feminine' in CHARACTER_PRESETS
+    assert 'Feminine' in CalibratedTextModifier.limits
+    assert 'Feminine' in TextModifier.strengths
+    import inspect
+    source = inspect.getsource(TextProsodyEventEngine.update)
+    assert "'Feminine'" in source
+    assert PRESETS['Feminine']['range_expansion'] > PRESETS['Anime Light']['range_expansion']
+
+
 @pytest.mark.parametrize('name,value',[('amount',-1),('pitch_range',101),('energy',math.nan),
     ('min_pitch',-2),('max_pitch',2),('update_ms',25),('enabled',1),('ending_lift',1),
     ('preset','bad'),('confidence',0),('attack_ms',1),('release_ms',999),('onset_lift',1),('max_gain_db',2)])
