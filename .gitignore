@@ -51,6 +51,14 @@ build/
 !Koeiro.spec
 # Local scratch: agent/editor markers, ad-hoc probes and headless renders
 .freebuff/
+# PV production assets are regenerable or private; only promo/ code is published.
+# public/audio holds the owner's own recordings (voice_demo_*.wav, raw/voice_source.mp3).
+promo/public/audio/
+promo/public/brand/
+promo/public/meta/
+promo/public/raw/
+promo/debug.log
+renders/
 probe.txt
 pytest_full.log
 render_*.png
