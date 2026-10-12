@@ -105,6 +105,7 @@ class FakeASRBridge:
     def __init__(self, parameters, client_factory=None):
         self.status = "Stopped"
         self.final_text = ""
+        self.partial_text = ""
         self.fed = 0
 
     def load(self):
@@ -119,6 +120,8 @@ class FakeASRBridge:
     def current(self):
         if self.final_text:
             return {"final_text": self.final_text, "audio_timestamp": time.monotonic()}
+        if self.partial_text:
+            return {"partial_text": self.partial_text, "audio_timestamp": time.monotonic()}
         return {}
 
     def stop(self):
@@ -198,3 +201,74 @@ def test_translate_survives_settings_roundtrip():
     saved = AppSettings.from_dict({"voice_mode": "translate"})
     assert saved.voice_mode == "translate"
     assert AppSettings.from_dict({"voice_mode": "karaoke"}).voice_mode == "ai_voice"
+
+
+def test_driver_flags_a_silent_microphone(monkeypatch):
+    import src.asr.bridge as asr_bridge_module
+    monkeypatch.setattr(asr_bridge_module, "ASRBridge", FakeASRBridge)
+    from src.prosody.parameters import ProsodyParameters
+    engine, playback = FakeEngine(), TranslatePlayback()
+    from src.translate.live import TranslationDriver
+    driver = TranslationDriver(engine, playback)
+    driver.start(ProsodyParameters(voice_commands=True), lambda: FakePipeline())
+    try:
+        for _ in range(40):
+            engine.translate_tap.offer(np.zeros(960, dtype=np.float32))
+            time.sleep(0.02)
+        assert driver.status["mic_silent"] is True
+        engine.translate_tap.offer(tone(frames=960, level=0.2))
+        deadline = time.monotonic() + 2
+        while driver.status["mic_silent"] and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert driver.status["mic_silent"] is False
+    finally:
+        driver.stop()
+
+
+def test_driver_speaks_a_stable_partial_without_a_pause(monkeypatch):
+    """Long monologues never finalize: a steady partial still goes out, once."""
+    import src.asr.bridge as asr_bridge_module
+    monkeypatch.setattr(asr_bridge_module, "ASRBridge", FakeASRBridge)
+    from src.prosody.parameters import ProsodyParameters
+    engine, playback = FakeEngine(), TranslatePlayback()
+    from src.translate.live import TranslationDriver
+    driver = TranslationDriver(engine, playback)
+    driver.stable_speak_seconds = 0.2
+    pipeline = FakePipeline()
+    driver.start(ProsodyParameters(voice_commands=True), lambda: pipeline)
+    try:
+        driver.asr.partial_text = "konnichiwa"
+        deadline = time.monotonic() + 5
+        while not pipeline.calls and time.monotonic() < deadline:
+            engine.translate_tap.offer(tone(frames=960, level=0.1))
+            time.sleep(0.01)
+        assert pipeline.calls == ["konnichiwa"]
+        # It stays steady: still only spoken once.
+        time.sleep(0.5)
+        assert pipeline.calls == ["konnichiwa"]
+        # It grows: only the new words go out next.
+        driver.asr.partial_text = "konnichiwa sekai"
+        deadline = time.monotonic() + 5
+        while len(pipeline.calls) < 2 and time.monotonic() < deadline:
+            engine.translate_tap.offer(tone(frames=960, level=0.1))
+            time.sleep(0.01)
+        assert pipeline.calls == ["konnichiwa", "sekai"]
+    finally:
+        driver.stop()
+
+
+def test_translated_speech_reaches_chain_output_while_mic_does_not():
+    """The Discord wire carries the TTS, never the untranslated microphone."""
+    from src.processors.chain import ProcessorChain
+    from src.processors.voice_router import VoiceRouter
+    mic = (np.sin(2 * np.pi * 300 * np.arange(4800) / SAMPLE_RATE) * 0.3).astype(np.float32)
+    tts = (np.sin(2 * np.pi * 440 * np.arange(4800) / SAMPLE_RATE) * 0.25).astype(np.float32)
+    chain = ProcessorChain(main_processor=VoiceRouter(mode="translate"))
+    chain.prepare(SAMPLE_RATE, 480)
+    chain.main_processor.translate_playback.offer(tts)
+    out = np.concatenate([chain.process(mic[i:i + 480].reshape(-1, 1).copy(), SAMPLE_RATE)[:, 0]
+                          for i in range(0, len(mic), 480)])
+    # Past the route-switch crossfade and before the utterance tail settle,
+    # the output is the offered speech bit-exactly, not the microphone.
+    np.testing.assert_array_equal(out[960:4608], tts[960:4608])
+    assert not np.allclose(out[960:4608], mic[960:4608])

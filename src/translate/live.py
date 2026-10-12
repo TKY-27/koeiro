@@ -23,6 +23,12 @@ log = logging.getLogger(__name__)
 
 # Microphone block size the driver pulls per step.
 READ_FRAMES = 960
+# Below this RMS a tap block counts as silence (same floor as the ASR worker).
+SILENCE_RMS = 0.004
+# A partial transcript unchanged for this long is spoken even without a pause:
+# long monologues otherwise never finalize. Repeats are suppressed by speaking
+# only the words not spoken yet (see _speak_delta).
+STABLE_SPEAK_SECONDS = 3.0
 
 
 class TranslationDriver:
@@ -37,8 +43,10 @@ class TranslationDriver:
         self.voice = ""
         self._thread = None
         self._stop = threading.Event()
+        self.stable_speak_seconds = STABLE_SPEAK_SECONDS
         self._status = {"running": False, "asr": "stopped", "heard": "",
-                        "said": "", "queued_seconds": 0.0, "spoken": 0, "error": ""}
+                        "said": "", "queued_seconds": 0.0, "spoken": 0,
+                        "mic_silent": False, "error": ""}
 
     @property
     def status(self):
@@ -81,6 +89,9 @@ class TranslationDriver:
         self.engine.translate_tap.active = True
         self._stop.clear()
         self._last_spoken = ""
+        self._partial_text = ""
+        self._partial_since = 0.0
+        self._silent_blocks = 0
         self._thread = threading.Thread(target=self._run, name="translate-driver", daemon=True)
         self._thread.start()
 
@@ -130,6 +141,15 @@ class TranslationDriver:
                     self._stop.wait(0.02)
                     continue
                 block = scratch[:got].copy()
+                level = float(np.sqrt(np.mean(block.astype(np.float64) ** 2)))
+                if level < SILENCE_RMS:
+                    self._silent_blocks += 1
+                else:
+                    self._silent_blocks = 0
+                if self._silent_blocks * got > self.sample_rate // 2:
+                    self._report(mic_silent=True)
+                else:
+                    self._report(mic_silent=False)
                 try:
                     asr.submit(block)
                 except Exception as error:
@@ -146,18 +166,45 @@ class TranslationDriver:
             context = self.asr.current() or {}
         except Exception:
             return
-        text = (context.get("final_text") or "").strip()
-        if not text:
+        now = time.monotonic()
+        final = (context.get("final_text") or "").strip()
+        if final:
+            self._partial_text = ""
+            self._speak_delta(final)
+            return
+        partial = (context.get("partial_text") or "").strip()
+        if not partial:
+            self._partial_text = ""
             if self._last_spoken:
                 # A pause between sentences re-arms repeats of the same words.
                 self._last_spoken = ""
             return
-        if text == self._last_spoken:
+        if partial != self._partial_text:
+            self._partial_text = partial
+            self._partial_since = now
             return
-        self._last_spoken = text
+        if now - self._partial_since >= self.stable_speak_seconds:
+            self._speak_delta(partial)
+
+    def _speak_delta(self, text):
+        """Speak what has not been spoken yet, nothing twice.
+
+        Finals and stable partials overlap: a sentence first appears as a
+        partial, then as a final. Speaking only the unseen suffix keeps long
+        monologues flowing without repeating words on Discord.
+        """
+        if not text or text == self._last_spoken:
+            return
+        if self._last_spoken and text.startswith(self._last_spoken):
+            speak_text = text[len(self._last_spoken):].strip()
+            if not speak_text:
+                self._last_spoken = text
+                return
+        else:
+            speak_text = text
         self._report(heard=text)
         try:
-            translated, audio = self.pipeline.process(text, "ja", "en", self.voice)
+            translated, audio = self.pipeline.process(speak_text, "ja", "en", self.voice)
         except Exception as error:
             self._report(error=str(error))
             return
@@ -165,6 +212,7 @@ class TranslationDriver:
             self._report(said=translated or "", error="音声が生成されませんでした")
             return
         if self.playback.offer(audio):
+            self._last_spoken = text
             self._report(said=translated or "", spoken=self._status.get("spoken", 0) + 1)
         else:
             self._report(said=translated or "", error="音声が生成されませんでした")
