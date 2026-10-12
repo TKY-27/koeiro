@@ -275,7 +275,7 @@ def begin_update_and_restart(staging_dir, version):
 
 
 def check_now(current=APP_VERSION, repo=UPDATE_REPO, timeout=15):
-    """One update check: 'uptodate' | {'tag', 'notes', 'asset'} | {'error'}.
+    """One update check: 'uptodate' | {'tag', 'notes', 'url', 'asset'} | {'error'}.
 
     Returns plain data (JSON-safe) so a background thread can hand it to the GUI.
     """
@@ -293,4 +293,5 @@ def check_now(current=APP_VERSION, repo=UPDATE_REPO, timeout=15):
     if asset is None:
         return {"status": "error", "message": "このOS用の配布がありません"}
     notes = str(release.get("body") or "")
-    return {"status": "found", "tag": tag, "notes": notes[:2000], "asset": asset}
+    return {"status": "found", "tag": tag, "notes": notes[:2000],
+            "url": str(release.get("html_url") or ""), "asset": asset}

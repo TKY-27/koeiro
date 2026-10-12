@@ -1951,22 +1951,24 @@ class MainWindow(QMainWindow):
             self._offer_update()
 
     def _offer_update(self):
-        """Found a release: update now, ignore this version, or later."""
+        """Found a release: update now, ignore this version, or later.
+
+        The note is long (a release body is thousands of characters) and grows the
+        dialog it sits in, so it scrolls inside a bounded area while the three
+        buttons stay in the dialog's own layout. They used to be QMessageBox text,
+        and a long note pushed 「更新して再起動」 out of the screen.
+        """
         pending = self._update_pending
         if not pending:
             return
-        notes = str(pending.get("notes") or "（リリースノートなし）")
-        box = QMessageBox(self)
-        box.setWindowTitle('アプリの更新')
-        box.setText(f'新しいバージョンがあります：{pending.get("tag", "")}\n\n{notes[:800]}')
-        update_button = box.addButton('更新して再起動', QMessageBox.ButtonRole.AcceptRole)
-        ignore_button = box.addButton('このバージョンは無視', QMessageBox.ButtonRole.DestructiveRole)
-        box.addButton('後で', QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked == update_button:
+        from .update_offer import UpdateOfferDialog
+        dialog = UpdateOfferDialog(self, str(pending.get("tag", "")),
+                                   str(pending.get("notes") or ""),
+                                   str(pending.get("url") or ""))
+        dialog.exec()
+        if dialog.action == 'update':
             self._download_and_restart()
-        elif clicked == ignore_button:
+        elif dialog.action == 'ignore':
             self.settings = replace(self.settings, app_update_ignored=str(pending.get("tag", "")))
             self._save_settings()
             self.update_status.setText(f'{pending.get("tag", "")} は無視中です')
