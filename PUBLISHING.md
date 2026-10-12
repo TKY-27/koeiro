@@ -85,11 +85,58 @@
 # 2. タグを打って push（アセット作成・添付は Actions が自動で行う）
 git tag v1.0.0; git push origin v1.0.0
 # 3. 手動確認だけなら Actions → release-assets → Run workflow（dry_run のまま）
+# 4. Windows の実行ファイル版を出すなら ↓ の setup.exe を作って添付
 ```
 
 更新時は仮想環境（`.venv`・`vc_models/meanvc2/.venv`・`vc_models/post_lavasr`）を
 引き継ぐため、再ダウンロードは発生しません。依存関係の固定が変わった版では、
 更新後に `tools/setup_release.py` を再実行してください。
+
+## Windows インストーラ（setup.exe）と実行ファイル版の自動更新
+
+実行ファイル版（`Koeiro.exe`）の更新は **setup.exe の再適用**で行います。凍結
+バンドル内をファイル差し替えする方式は採用できません：起動中の `Koeiro.exe` と
+`_internal\*.dll` は Windows にロックされ、自分自身を含むフォルダを退避できないためです。
+インストーラはインストール先の外からファイルを差し替えるので、この問題がありません。
+
+```powershell
+# 1. src/version.py を新タグに更新してコミット・タグ push（通常どおり）
+# 2. 手元で exe を作り直してから setup.exe を出す（PyInstaller と Inno Setup が必要）
+.\.venv\Scripts\python tools\build_windows_setup.py --tag v1.0.0 --rebuild
+# 3. リリースへ添付（Actions はソースツリーしか作らないので、これは手元添付）
+gh release upload v1.0.0 dist\setup\koeiro-v1.0.0-windows-setup.exe `
+                           dist\setup\koeiro-v1.0.0-windows-checksums.txt --clobber
+```
+
+- アセット名（変えないこと）：`koeiro-<tag>-windows-setup.exe` と
+  `koeiro-<tag>-windows-checksums.txt`（`<sha256>  <ファイル名>` の sha256sum 形式）
+- 実行ファイル版のアプリは **setup.exe と checksums.txt の両方がある版にしか更新しません**。
+  checksums が無い・合わない場合は「自動更新できません」と出して止まります（検証できない
+  exe をサイレントで走らせないため）。ダウンロードは `%LOCALAPPDATA%\Koeiro\updates\`
+- インストール先は既定で `%LOCALAPPDATA%\Programs\Koeiro`（ユーザー単位・UACなし）。
+  Program Files にしないのは、毎回同意を要求するとサイレント更新が成立しないためです
+- `AppId` は `installer\Koeiro.iss` に固定値で入れてあります。**変えると別アプリ扱いに
+  なって併存インストールになる**ので、版が上がってもそのままにします
+- 同梱物の検査：`tools/build_windows_setup.py` の `check_stage` が `koeiro-root.txt`
+  （ビルド元の絶対パス）・`settings.json`・`logs`・`recordings` を弾きます。
+  `koeiro-root.txt` を除くと `runtime_paths.install_root()` は **インストール先フォルダ**を
+  指すようになるので、AI環境は `%LOCALAPPDATA%\Programs\Koeiro\vc_models` のように
+  exe の隣に置く形になります（`KOEIRO_ROOT` で上書き可）
+
+## BOOTH 向け配布
+
+BOOTH の上限は **1ファイル 1.2GB・1商品あたり合計 10GB**（2026-03-09 時点。
+`booth.pixiv.help` のアップロード容量制限）。torch 環境（実測 2.2GB）とモデル
+（`vc_models/meanvc2/repo/preprocess/ckpts` だけで 1.8GB 超）を1ファイルに収めることは
+できないので、実行ファイル版は次の2点セットで配布します。
+
+1. `koeiro-<tag>-windows-setup.exe` … アプリ本体のみ（現状この setup が 1 ファイル）
+2. AI パック … 未実装。作るまでは setup 単体では **Original / Female DSP のみ**で
+   AI Voice は動きません（`tools/setup_release.py` を使える人に限られます）。
+   AI パックは 1.2GB 以内に切った zip 群とし、アプリ側でローカル取り込みする想定
+
+BOOTH 販売でもアプリ内蔵の自動更新は GitHub Releases を見にいきます（購入者に
+ネットワークが必要。オフライン完結にしたい場合は setup を再配布する）。
 
 ## ブランド画像
 

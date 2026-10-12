@@ -7,9 +7,17 @@ asks (or consented to the startup check): nothing here phones home by itself.
 Release layout this understands (see PUBLISHING.md):
 
 * tag like ``v1.2.3`` (optionally ``-preview.N``)
-* asset ``koeiro-<tag>-windows.zip`` / ``koeiro-<tag>-linux.tar.gz``
-* package root holds ``release.json`` (``{"app": "Koeiro", "version": ..., ...}``)
+* asset ``koeiro-<tag>-windows.zip`` / ``koeiro-<tag>-linux.tar.gz`` — a source tree,
+  for a release directory that gets swapped in place by ``src/update_swap.py``
+* asset ``koeiro-<tag>-windows-setup.exe`` — the installer, and the only thing a
+  frozen ``Koeiro.exe`` may update with. Swapping files around a running executable
+  cannot work on Windows (the image and its DLLs are locked), so the frozen path
+  downloads the new setup, verifies it against ``-checksums.txt`` and runs it
+  silently; Inno Setup closes this copy and relaunches the replaced one.
+* package root of a source tree holds ``release.json``
+  (``{"app": "Koeiro", "version": ..., ...}``)
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -31,6 +39,8 @@ PLATFORM_ASSETS = {
     "windows": ("windows", ".zip"),
     "linux": ("linux", ".tar.gz"),
 }
+SETUP_ASSET = "koeiro-{tag}-windows-setup.exe"
+CHECKSUMS_ASSET = "koeiro-{tag}-windows-checksums.txt"
 
 
 class UpdateError(Exception):
@@ -106,23 +116,55 @@ def fetch_latest_release(repo=UPDATE_REPO, timeout=15, allow_prerelease=False):
     return release
 
 
-def pick_asset(release, platform=None):
-    """Download candidate for this OS, or None when the release has none."""
+def pick_asset(release, platform=None, kind=None):
+    """Download candidate for this OS and install form, or None when there is none.
+
+    A frozen install must not take the source tree: it holds no ``Koeiro.exe`` and
+    would destroy the bundle it lands in. So ``kind == "frozen"`` only ever matches
+    the installer asset, and a release without one simply offers no update.
+    """
     if platform is None:
         platform = "windows" if sys.platform == "win32" else (
             "linux" if sys.platform.startswith("linux") else None)
+    if kind is None:
+        kind = "frozen" if getattr(sys, "frozen", False) else "package"
+    if not isinstance(release, dict):
+        return None
+    tag = str(release.get("tag_name", ""))
+    assets = release.get("assets") or []
+    if kind == "frozen":
+        if platform != "windows":
+            return None
+        wanted = SETUP_ASSET.format(tag=tag)
+        checksums = CHECKSUMS_ASSET.format(tag=tag)
+        for asset in assets:
+            name = str(asset.get("name", ""))
+            url = asset.get("browser_download_url")
+            if name == wanted and url:
+                return {"name": name, "url": url, "size": asset.get("size") or 0,
+                        "kind": "setup",
+                        "checksums_url": _asset_url(assets, checksums),
+                        "checksums_name": checksums}
+        return None
     wanted = PLATFORM_ASSETS.get(platform)
-    if wanted is None or not isinstance(release, dict):
+    if wanted is None:
         return None
     token, extension = wanted
-    tag = str(release.get("tag_name", ""))
     prefix = f"koeiro-{tag}-{token}"
-    for asset in release.get("assets") or []:
+    for asset in assets:
         name = str(asset.get("name", ""))
         url = asset.get("browser_download_url")
         if name.startswith(prefix) and name.endswith(extension) and url:
-            return {"name": name, "url": url, "size": asset.get("size") or 0}
+            return {"name": name, "url": url, "size": asset.get("size") or 0,
+                    "kind": "package"}
     return None
+
+
+def _asset_url(assets, name):
+    for asset in assets:
+        if str(asset.get("name", "")) == name and asset.get("browser_download_url"):
+            return str(asset["browser_download_url"])
+    return ""
 
 
 def download_asset(url, destination, progress=None, timeout=120):
@@ -199,6 +241,131 @@ def read_package_release(package_dir):
     return info
 
 
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def parse_checksums(text):
+    """``<sha256>  <filename>`` lines (sha256sum format) -> {filename: digest}."""
+    table = {}
+    for line in str(text).splitlines():
+        line = line.strip()
+        if len(line) < 66 or line[64] != " ":
+            continue
+        name = line[65:].lstrip(" *").strip()
+        if name:
+            table[name] = line[:64].lower()
+    return table
+
+
+def verify_downloaded(path, name, table):
+    """Refuse an installer whose digest is missing or differs. Never runs unverified."""
+    expected = table.get(str(name))
+    if not expected:
+        raise UpdateError("更新ファイルの検証情報がありません")
+    try:
+        actual = sha256_of(path)
+    except OSError as error:
+        raise UpdateError(f"更新ファイルを読みけません: {error}") from error
+    if actual != expected.lower():
+        raise UpdateError("更新ファイルの検証に失敗しました（ダウンロードが壊れている可能性があります）")
+    return actual
+
+
+def update_log_path():
+    """Where updater attempts and failures are recorded (per-user, next to app.log)."""
+    from .runtime_paths import data_dir
+    target = data_dir() / "logs"
+    target.mkdir(parents=True, exist_ok=True)
+    return target / "update.log"
+
+
+def log_update(message):
+    """Best-effort audit line. An updater that cannot write its log still updates."""
+    try:
+        with open(update_log_path(), "a", encoding="utf-8") as stream:
+            stream.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    except OSError:
+        pass
+
+
+def prune_old_installers(keep):
+    """Drop previous setup downloads so the staging folder does not grow per version."""
+    keep = Path(keep)
+    for path in updates_dir().glob("koeiro-*-windows-setup.exe"):
+        if path == keep:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def prepare_installer(asset, tag, progress=None):
+    """Download and verify a setup asset. Runs on a worker thread; returns the path."""
+    if not isinstance(asset, dict) or asset.get("kind") != "setup":
+        raise UpdateError("この実行形式では自動更新できません")
+    name = str(asset.get("name") or SETUP_ASSET.format(tag=tag))
+    checksums_name = str(asset.get("checksums_name") or CHECKSUMS_ASSET.format(tag=tag))
+    checksums_url = str(asset.get("checksums_url") or "")
+    if not checksums_url:
+        raise UpdateError("この版には検証情報（checksums）が同梱されていないため、自動更新できません")
+    checksums_path = updates_dir() / checksums_name
+    download_asset(checksums_url, checksums_path, timeout=30)
+    try:
+        table = parse_checksums(checksums_path.read_text("utf-8"))
+        target = updates_dir() / name
+        download_asset(str(asset["url"]), target, progress=progress)
+        verify_downloaded(target, name, table)
+    finally:
+        try:
+            checksums_path.unlink()
+        except OSError:
+            pass
+    prune_old_installers(target)
+    log_update(f"verified {name} ({target.stat().st_size} bytes)")
+    return target
+
+
+def installer_command(setup_path):
+    """Silent install: no wizard, no reboot prompt, no per-file prompt."""
+    return [str(Path(setup_path).resolve()), "/VERYSILENT", "/NORESTART",
+            "/SUPPRESSMSGBOXES", "/SP-"]
+
+
+def run_installer_and_restart(setup_path):
+    """Hand the update to the installer and return; the caller must quit right away.
+
+    The setup program is outside the install folder, so nothing it replaces is locked
+    by this process. Inno Setup closes the running copy itself (CloseApplications) and
+    starts the new one when it is done.
+    """
+    from .runtime_paths import is_frozen
+    if not is_frozen():
+        raise UpdateError("実行ファイル版以外では使えません")
+    path = Path(setup_path)
+    if path.suffix.lower() != ".exe" or not path.is_file():
+        raise UpdateError("更新パッケージが壊れています")
+    command = installer_command(path)
+    log_update(f"launching installer: {path.name}")
+    try:
+        if sys.platform == "win32":
+            flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             stdin=subprocess.DEVNULL, creationflags=flags, close_fds=True)
+        else:
+            subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+    except Exception as error:
+        log_update(f"installer launch failed: {error}")
+        raise UpdateError(f"インストーラを起動できませんでした: {error}") from error
+    return command
+
+
 def current_kind():
     """'frozen' (installed exe), 'release-dir' (marked copy) or 'source'."""
     from .runtime_paths import asset_root, is_frozen
@@ -210,10 +377,14 @@ def current_kind():
 
 
 def install_dir():
-    """Directory an update would replace, or None for a source checkout."""
+    """Directory an in-place swap would replace, or None when there is none.
+
+    Only a release directory (a marked source tree copy) can be swapped: a frozen
+    install updates through its installer instead, see ``run_installer_and_restart``.
+    """
     from .runtime_paths import asset_root, is_frozen
     if is_frozen():
-        return Path(sys.executable).resolve().parent
+        return None
     if (asset_root() / "release.json").is_file():
         return asset_root()
     return None
@@ -229,8 +400,6 @@ def updates_dir():
 
 def launch_command():
     """How this running copy was started, for the post-update relaunch."""
-    if getattr(sys, "frozen", False):
-        return [str(Path(sys.executable).resolve())]
     root = Path(__file__).resolve().parents[1]
     return [sys.executable, str(root / "app.py")]
 
@@ -241,7 +410,6 @@ def begin_update_and_restart(staging_dir, version):
     The helper waits for this process to exit, swaps the install, then launches
     the new copy. The caller must quit the app right after this returns.
     """
-    from .runtime_paths import is_frozen
     target = install_dir()
     if target is None:
         raise UpdateError("この実行形式では自動更新できません")
@@ -256,11 +424,8 @@ def begin_update_and_restart(staging_dir, version):
     }
     plan_path = Path(staging_dir) / "update-plan.json"
     plan_path.write_text(json.dumps(plan, ensure_ascii=False), "utf-8")
-    if is_frozen():
-        command = [str(Path(sys.executable).resolve()), "--apply-update", str(plan_path)]
-    else:
-        root = Path(__file__).resolve().parents[1]
-        command = [sys.executable, str(root / "app.py"), "--apply-update", str(plan_path)]
+    root = Path(__file__).resolve().parents[1]
+    command = [sys.executable, str(root / "app.py"), "--apply-update", str(plan_path)]
     try:
         if sys.platform == "win32":
             flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
@@ -278,7 +443,10 @@ def check_now(current=APP_VERSION, repo=UPDATE_REPO, timeout=15):
     """One update check: 'uptodate' | {'tag', 'notes', 'url', 'asset'} | {'error'}.
 
     Returns plain data (JSON-safe) so a background thread can hand it to the GUI.
+    The asset carries a ``kind``: ``setup`` for an installed executable, ``package``
+    for a release directory.
     """
+    kind = current_kind()
     release = fetch_latest_release(repo, timeout)
     if release is None:
         return {"status": "error", "message": "更新情報を取得できませんでした"}
@@ -289,8 +457,11 @@ def check_now(current=APP_VERSION, repo=UPDATE_REPO, timeout=15):
         return {"status": "error", "message": "更新情報を取得できませんでした"}
     if not newer:
         return {"status": "uptodate", "tag": tag}
-    asset = pick_asset(release)
+    asset = pick_asset(release, kind=kind)
     if asset is None:
+        if kind == "frozen":
+            return {"status": "error",
+                    "message": "この版には実行ファイル用のインストーラがありません"}
         return {"status": "error", "message": "このOS用の配布がありません"}
     notes = str(release.get("body") or "")
     return {"status": "found", "tag": tag, "notes": notes[:2000],

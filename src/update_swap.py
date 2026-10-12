@@ -3,9 +3,13 @@
 Standard library only and no Qt/audio/model imports, so `app.py --apply-update`
 can run it in a bare helper process after the GUI has exited (on Windows the
 running executable itself is locked, which is why the swap never happens
-in-process). Every function here is unit-tested against temporary directories.
+in-process). Only a release directory reaches this module: an installed
+``Koeiro.exe`` updates through its setup program instead, because a copy of the
+exe being replaced can never replace it. Every function here is unit-tested
+against temporary directories.
 """
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -116,17 +120,21 @@ def launch_new(argv):
 
 
 def main(plan_path):
-    """Helper entry: wait, swap, launch. Returns a process exit code."""
+    """Helper entry: wait, swap, launch. Returns a process exit code.
+
+    app.py configures logging before calling this, so a failure the detached helper
+    cannot show on screen still lands in logs/app.log.
+    """
     try:
         plan = json.loads(Path(plan_path).read_text("utf-8"))
         wait_for_exit(int(plan["parent_pid"]))
         report = swap_install(plan["staging"], plan["install"])
         launch_new(plan["launch"])
     except SwapError as error:
-        print(f"update failed: {error}")
+        logging.getLogger("update").error("update failed: %s", error)
         return 1
     except (OSError, ValueError, KeyError, TypeError) as error:
-        print(f"update failed: {error}")
+        logging.getLogger("update").error("update failed: %s", error)
         return 1
-    print(f"updated: {report['install']}")
+    logging.getLogger("update").info("updated: %s", report["install"])
     return 0

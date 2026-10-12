@@ -155,6 +155,30 @@ py -3.12 tools/setup_release.py
   ウィンドウは開かず、起動中のウィンドウを前面に出してすぐ終了します。`--data-dir` を
   変えた別プロファイルは同時に起動でき、ヘッドレスの `--smoke-test` は常に実行されます
 
+### Windows（setup.exe で配る・実行ファイル版の自動更新）
+
+インストーラは Inno Setup 6 で作ります（`winget install --id JRSoftware.InnoSetup -e --scope user`）。
+
+```powershell
+.\.venv\Scripts\python tools\build_windows_setup.py --tag v0.13.2 --rebuild
+# → dist\setup\koeiro-v0.13.2-windows-setup.exe と koeiro-v0.13.2-windows-checksums.txt
+```
+
+- インストール先は既定で `%LOCALAPPDATA%\Programs\Koeiro`。**ユーザー単位なので管理者権限を
+  要求せず、自動更新の再適用が対話なしで成立します**
+- setup.exe は **アプリ本体のみ**同梱です。AI環境と音声モデルは入らないので、AI Voice は
+  別途 `tools/setup_release.py`（Python 3.12 が必要）で導入します。Original と Female DSP は
+  同梱の dll でそのまま動きます
+- ビルド元の絶対パスを記録した `koeiro-root.txt` はステージングから除かれます。除いた
+  実体は **インストール先フォルダ**を AI環境の置き場所として探すので、AI環境は
+  `Koeiro.exe` の隣（`%LOCALAPPDATA%\Programs\Koeiro\vc_models`）に置く形になります
+- **実行ファイル版の自動更新は setup.exe 経由**です（「調整 → アプリ → 更新を確認」）。
+  アプリはリリースから `koeiro-<tag>-windows-setup.exe` と `-checksums.txt` を取り寄せ、
+  sha256 を検証してから無対話で適用し、インストーラがアプリを閉じて新版を起動します。
+  検証情報が無い／合わない版は適用しません。凍結バンドル内をファイル差し替えする方式は
+  採れません（起動中の exe と `_internal\*.dll` は Windows にロックされるため）
+- 更新の記録は `%LOCALAPPDATA%\Koeiro\logs\update.log` に出ます
+
 ### Linux（実行ファイルとタスクバー登録）
 
 ```sh

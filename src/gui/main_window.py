@@ -1981,7 +1981,8 @@ class MainWindow(QMainWindow):
         if not asset.get("url"):
             self.update_status.setText('配布ファイルが見つかりませんでした')
             return
-        self.update_status.setText('ダウンロードしています…')
+        self.update_status.setText('インストーラをダウンロードしています…'
+                                   if asset.get("kind") == "setup" else 'ダウンロードしています…')
         self.update_check_btn.setEnabled(False)
         tag = str(pending.get("tag", ""))
         self.files.submit('update_download',
@@ -1989,9 +1990,12 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _fetch_update_package(asset, tag):
-        """Worker thread: download, extract, validate. Returns plain data only."""
+        """Worker thread: download, verify, stage. Returns plain data only."""
         from src import app_update
         try:
+            if asset.get("kind") == "setup":
+                installer = app_update.prepare_installer(asset, tag)
+                return {"installer": str(installer)}
             target = app_update.updates_dir() / str(asset.get("name") or f"koeiro-{tag}.pkg")
             app_update.download_asset(asset["url"], target)
             staging = app_update.updates_dir() / f"staging-{tag}"
@@ -2016,6 +2020,16 @@ class MainWindow(QMainWindow):
             result = json.loads(raw[7:] if raw.startswith('ERROR: ') else raw)
         except ValueError:
             result = {"error": raw}
+        if isinstance(result, dict) and result.get("installer"):
+            from src import app_update
+            try:
+                app_update.run_installer_and_restart(result["installer"])
+            except Exception as error:
+                self.update_status.setText(f'更新を開始できませんでした：{error}')
+                return
+            self.update_status.setText('インストール後に自動的に再起動します…')
+            self.close()
+            return
         if isinstance(result, dict) and result.get("staging"):
             from src import app_update
             try:

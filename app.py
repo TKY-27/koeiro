@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--apply-update", metavar="PLAN", default=None,
                         help="Apply a staged update from a plan file, then exit (used by the updater)")
     args = parser.parse_args()
+    configure_logging(args.data_dir / "logs")
     if args.apply_update:
         from src.update_swap import main as apply_update
         return apply_update(args.apply_update)
@@ -35,7 +36,6 @@ def main():
     # Reduce pure-Python GIL scheduling stalls relative to a 5.33 ms deadline.
     # This changes only this app process, not Windows or other applications.
     sys.setswitchinterval(min(sys.getswitchinterval(), 0.001))
-    configure_logging(args.data_dir / "logs")
     logging.getLogger("app").info("App startup; Python=%s; platform=%s", sys.version, sys.platform)
     if args.list_devices:
         from src.audio.devices import enumerate_devices

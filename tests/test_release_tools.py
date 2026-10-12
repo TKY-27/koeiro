@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from tools import build_release_asset
+from tools import build_windows_setup
 from tools import setup_release
 
 
@@ -143,3 +144,107 @@ def test_swap_install_carries_the_virtualenvs_over(tmp_path):
     assert (install / "app.py").read_text("utf-8") == "new"
     assert (install / ".venv" / "bin" / "python").read_text("utf-8") == "interpret"
     assert Path(report["backup"]).is_dir()
+
+
+def test_setup_asset_names_follow_the_update_contract():
+    assert build_windows_setup.version_of("v1.2.3") == "1.2.3"
+    assert build_windows_setup.asset_name("v1.2.3") == "koeiro-v1.2.3-windows-setup.exe"
+    assert build_windows_setup.checksums_name("v1.2.3") == "koeiro-v1.2.3-windows-checksums.txt"
+
+
+def _fake_repo(tmp_path):
+    root = tmp_path / "repo"
+    for name in ("LICENSE", "README.md", "THIRD_PARTY_NOTICES.md"):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("doc", "utf-8")
+    bundle = root / "dist" / "Koeiro"
+    (bundle / "_internal" / "assets").mkdir(parents=True)
+    (bundle / "Koeiro.exe").write_bytes(b"MZ")
+    (bundle / "_internal" / "assets" / "icon.ico").write_bytes(b"ico")
+    (bundle / "_internal" / build_windows_setup.ROOT_FILE_NAME).write_text(
+        str(root), "utf-8")
+    return root, bundle
+
+
+def test_stage_bundle_drops_the_build_root_and_carries_the_documents(tmp_path):
+    root, bundle = _fake_repo(tmp_path)
+    stage = build_windows_setup.stage_bundle(root, bundle, root / "build" / "stage")
+    assert (stage / "Koeiro.exe").is_file()
+    assert (stage / "LICENSE.txt").is_file()
+    assert not (stage / "_internal" / build_windows_setup.ROOT_FILE_NAME).exists()
+    assert build_windows_setup.check_stage(stage) == stage
+    kept = build_windows_setup.stage_bundle(root, bundle, root / "build" / "stage2",
+                                            keep_build_root=True)
+    with pytest.raises(build_windows_setup.SetupError):
+        build_windows_setup.check_stage(kept)
+
+
+def test_check_stage_refuses_a_missing_bundle(tmp_path):
+    root, bundle = _fake_repo(tmp_path)
+    (bundle / "Koeiro.exe").unlink()
+    with pytest.raises(build_windows_setup.SetupError):
+        build_windows_setup.stage_bundle(root, bundle, root / "build" / "stage")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(build_windows_setup.SetupError):
+        build_windows_setup.check_stage(empty)
+
+
+def test_check_stage_refuses_user_state(tmp_path):
+    root, bundle = _fake_repo(tmp_path)
+    stage = build_windows_setup.stage_bundle(root, bundle, root / "build" / "stage")
+    (stage / "settings.json").write_text("{}", "utf-8")
+    with pytest.raises(build_windows_setup.SetupError):
+        build_windows_setup.check_stage(stage)
+
+
+def test_check_fresh_refuses_an_exe_older_than_src(tmp_path):
+    root, bundle = _fake_repo(tmp_path)
+    source = root / "src" / "newer.py"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("x", "utf-8")
+    past = source.stat().st_atime - 3600
+    import os
+    os.utime(bundle / "Koeiro.exe", (past, past))
+    with pytest.raises(build_windows_setup.SetupError):
+        build_windows_setup.check_fresh(root, bundle / "Koeiro.exe")
+    build_windows_setup.check_fresh(root, bundle / "Koeiro.exe", allow_stale=True)
+
+
+def test_find_iscc_reports_a_usable_hint(tmp_path, monkeypatch):
+    empty = tmp_path / "empty"
+    monkeypatch.delenv("ISCC", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(empty))
+    monkeypatch.setenv("PROGRAMFILES", str(empty))
+    monkeypatch.setenv("PROGRAMFILES(X86)", str(empty))
+    monkeypatch.setattr(build_windows_setup.shutil, "which", lambda name: None)
+    with pytest.raises(build_windows_setup.SetupError) as caught:
+        build_windows_setup.find_iscc(tmp_path / "absent.exe")
+    assert "Inno Setup" in str(caught.value)
+    installed = empty / "Programs" / "Inno Setup 6" / "ISCC.exe"
+    installed.parent.mkdir(parents=True)
+    installed.write_bytes(b"MZ")
+    assert build_windows_setup.find_iscc(tmp_path / "absent.exe") == installed
+    real = empty / "Inno Setup 6" / "ISCC.exe"
+    real.parent.mkdir(parents=True)
+    real.write_bytes(b"MZ")
+    assert build_windows_setup.find_iscc(None) == real
+
+
+def test_checksums_are_readable_by_the_updater(tmp_path):
+    """The builder writes what src/app_update.py parses; lock the contract."""
+    from src import app_update
+    entries = {"koeiro-v1.0.0-windows-setup.exe": "a" * 64,
+               "koeiro-v1.0.0-windows.zip": "b" * 64}
+    path = build_windows_setup.write_checksums(tmp_path, "v1.0.0", entries)
+    assert path.name == "koeiro-v1.0.0-windows-checksums.txt"
+    assert app_update.parse_checksums(path.read_text("utf-8")) == entries
+
+
+def test_version_tag_must_match_the_build_reports(tmp_path):
+    root, _bundle = _fake_repo(tmp_path)
+    (root / "src" / "version.py").parent.mkdir(parents=True, exist_ok=True)
+    (root / "src" / "version.py").write_text('APP_VERSION = "1.2.3"\n', "utf-8")
+    build_windows_setup.check_version_tag(root, "v1.2.3")
+    with pytest.raises(build_windows_setup.SetupError):
+        build_windows_setup.check_version_tag(root, "v1.2.4")

@@ -1,8 +1,9 @@
 """Update check, download staging and install swap.
 
-Network is never touched: the GitHub API is stubbed, and the install swap runs
-against temporary directories. The one thing automation cannot prove — that a
-helper process replaces a locked executable after exit — stays out of scope.
+Network is never touched: the GitHub API is stubbed. The install swap runs against
+temporary directories, and the frozen path is checked up to the point of launching
+the setup program — that Inno Setup really replaces a running ``Koeiro.exe`` is a
+manual check (PUBLISHING.md), not something a test can prove here.
 """
 import io
 import json
@@ -46,11 +47,130 @@ def test_pick_asset_selects_this_os_package():
         {"name": "notes.txt", "browser_download_url": "http://n", "size": 1},
     ]}
     windows = app_update.pick_asset(release, platform="windows")
-    assert windows == {"name": "koeiro-v1.0.0-windows.zip", "url": "http://w", "size": 10}
+    assert windows == {"name": "koeiro-v1.0.0-windows.zip", "url": "http://w", "size": 10,
+                       "kind": "package"}
     linux = app_update.pick_asset(release, platform="linux")
     assert linux["url"] == "http://l"
     assert app_update.pick_asset(release, platform="darwin") is None
     assert app_update.pick_asset({"tag_name": "v1.0.0", "assets": []}, platform="windows") is None
+
+
+def _installer_release():
+    return {"tag_name": "v1.0.0", "assets": [
+        {"name": "koeiro-v1.0.0-windows.zip", "browser_download_url": "http://w", "size": 10},
+        {"name": "koeiro-v1.0.0-windows-setup.exe", "browser_download_url": "http://s", "size": 99},
+        {"name": "koeiro-v1.0.0-windows-checksums.txt", "browser_download_url": "http://c", "size": 1},
+        {"name": "koeiro-v1.0.0-linux.tar.gz", "browser_download_url": "http://l", "size": 20},
+    ]}
+
+
+def test_frozen_install_picks_the_installer_never_the_source_tree():
+    """The zip holds app.py and src/, no Koeiro.exe: swapping it into an install kills it."""
+    asset = app_update.pick_asset(_installer_release(), kind="frozen")
+    assert asset == {"name": "koeiro-v1.0.0-windows-setup.exe", "url": "http://s", "size": 99,
+                     "kind": "setup", "checksums_url": "http://c",
+                     "checksums_name": "koeiro-v1.0.0-windows-checksums.txt"}
+    assert app_update.pick_asset(_installer_release(), kind="package")["kind"] == "package"
+    source_only = {"tag_name": "v1.0.0", "assets": [
+        {"name": "koeiro-v1.0.0-windows.zip", "browser_download_url": "http://w", "size": 10}]}
+    assert app_update.pick_asset(source_only, kind="frozen") is None
+    assert app_update.pick_asset(_installer_release(), platform="linux", kind="frozen") is None
+
+
+def test_check_now_says_so_when_a_release_has_no_installer(monkeypatch):
+    monkeypatch.setattr(app_update, "current_kind", lambda: "frozen")
+    monkeypatch.setattr(app_update, "fetch_latest_release",
+                        lambda *args, **kwargs: {"tag_name": "v9.9.9", "assets": [
+                            {"name": "koeiro-v9.9.9-windows.zip",
+                             "browser_download_url": "http://w", "size": 5}]})
+    result = app_update.check_now(current="v0.13.1")
+    assert result["status"] == "error" and "インストーラ" in result["message"]
+
+
+def test_parse_checksums_reads_the_sha256sum_format():
+    text = "\n".join([
+        "a" * 64 + "  koeiro-v1.0.0-windows-setup.exe",
+        "b" * 64 + " *koeiro-v1.0.0-windows.zip",
+        "garbage line",
+        "",
+    ]) + "\n"
+    table = app_update.parse_checksums(text)
+    assert table["koeiro-v1.0.0-windows-setup.exe"] == "a" * 64
+    assert table["koeiro-v1.0.0-windows.zip"] == "b" * 64
+    assert len(table) == 2
+
+
+def test_verify_downloaded_refuses_mismatch_and_missing(tmp_path):
+    payload = b"setup-bytes"
+    target = tmp_path / "koeiro-v1.0.0-windows-setup.exe"
+    target.write_bytes(payload)
+    digest = app_update.sha256_of(target)
+    table = {target.name: digest, "other.exe": "0" * 64}
+    assert app_update.verify_downloaded(target, target.name, table) == digest
+    with pytest.raises(UpdateError):
+        app_update.verify_downloaded(target, target.name, {target.name: "0" * 64})
+    with pytest.raises(UpdateError):
+        app_update.verify_downloaded(target, "missing.exe", table)
+
+
+def test_prepare_installer_downloads_then_verifies(monkeypatch, tmp_path):
+    import hashlib
+    monkeypatch.setattr(app_update, "updates_dir", lambda: tmp_path)
+    monkeypatch.setattr(app_update, "log_update", lambda message: None)
+    payload = b"setup-bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    asset = app_update.pick_asset(_installer_release(), kind="frozen")
+
+    def serve(url, destination, progress=None, timeout=120):
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.name.endswith("checksums.txt"):
+            destination.write_text(f"{digest}  koeiro-v1.0.0-windows-setup.exe\n", "utf-8")
+        else:
+            destination.write_bytes(payload)
+        return destination
+
+    monkeypatch.setattr(app_update, "download_asset", serve)
+    assert app_update.prepare_installer(asset, "v1.0.0").read_bytes() == payload
+
+    def corrupted(url, destination, progress=None, timeout=120):
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.name.endswith("checksums.txt"):
+            destination.write_text(f"{'0' * 64}  koeiro-v1.0.0-windows-setup.exe\n", "utf-8")
+        else:
+            destination.write_bytes(payload)
+        return destination
+
+    monkeypatch.setattr(app_update, "download_asset", corrupted)
+    with pytest.raises(UpdateError):
+        app_update.prepare_installer(asset, "v1.0.0")
+    with pytest.raises(UpdateError):
+        app_update.prepare_installer(dict(asset, checksums_url=""), "v1.0.0")
+    with pytest.raises(UpdateError):
+        app_update.prepare_installer({"url": "http://w", "kind": "package"}, "v1.0.0")
+
+
+def test_installer_command_is_silent_and_unattended():
+    command = app_update.installer_command(Path("C:/tmp/koeiro-v1.0.0-windows-setup.exe"))
+    assert command[0].lower().endswith(".exe")
+    for flag in ("/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES"):
+        assert flag in command
+
+
+def test_run_installer_refuses_a_source_checkout(monkeypatch, tmp_path):
+    installer = tmp_path / "koeiro-v1.0.0-windows-setup.exe"
+    installer.write_bytes(b"x")
+    with pytest.raises(UpdateError):
+        app_update.run_installer_and_restart(installer)
+    with pytest.raises(UpdateError):
+        app_update.run_installer_and_restart(tmp_path / "absent.exe")
+
+
+def test_install_dir_is_none_for_a_frozen_build(monkeypatch):
+    from src import runtime_paths
+    monkeypatch.setattr(runtime_paths, "is_frozen", lambda: True)
+    assert app_update.install_dir() is None
 
 
 def test_check_now_reports_found_uptodate_and_errors(monkeypatch):
@@ -60,7 +180,8 @@ def test_check_now_reports_found_uptodate_and_errors(monkeypatch):
                                                       "browser_download_url": "http://w",
                                                       "size": 5}]})
     monkeypatch.setattr(app_update, "pick_asset",
-                        lambda release, platform=None: {"name": "x", "url": "http://w", "size": 5})
+                        lambda release, platform=None, kind=None: {
+                            "name": "x", "url": "http://w", "size": 5, "kind": "package"})
     found = app_update.check_now(current="v0.11.0-preview.3")
     assert found["status"] == "found" and found["tag"] == "v9.9.9"
     assert found["notes"] == "notes" and found["asset"]["url"] == "http://w"
@@ -71,7 +192,8 @@ def test_check_now_reports_found_uptodate_and_errors(monkeypatch):
     assert app_update.check_now()["status"] == "error"
     monkeypatch.setattr(app_update, "fetch_latest_release",
                         lambda *args, **kwargs: {"tag_name": "v9.9.9", "assets": []})
-    monkeypatch.setattr(app_update, "pick_asset", lambda release, platform=None: None)
+    monkeypatch.setattr(app_update, "pick_asset",
+                        lambda release, platform=None, kind=None: None)
     assert app_update.check_now(current="v0.1.0")["status"] == "error"
 
 
@@ -277,6 +399,34 @@ def test_update_download_in_source_checkout_reports_gracefully(ai_window):
     window.files.results["update_download"] = json.dumps({"staging": "C:/tmp/staging"})
     window._drain_update_results()
     assert "更新を開始できませんでした" in window.update_status.text()
+
+
+def test_update_installer_result_launches_or_reports(ai_window):
+    """The setup branch must not fall through to the swap branch."""
+    import json
+    app, window, backend, bridge = ai_window
+    window._update_pending = {"tag": "v9.9.9",
+                              "asset": {"name": "k.exe", "url": "http://x", "kind": "setup"}}
+    window.files.results["update_download"] = json.dumps({"installer": "C:/tmp/k.exe"})
+    window._drain_update_results()
+    status = window.update_status.text()
+    assert "更新を開始できませんでした" in status
+    assert "実行ファイル版以外では使えません" in status
+
+
+def test_fetch_update_package_routes_a_setup_asset(monkeypatch, tmp_path):
+    from src.gui.main_window import MainWindow
+    monkeypatch.setattr(app_update, "prepare_installer",
+                        lambda asset, tag, progress=None: tmp_path / "k.exe")
+    result = MainWindow._fetch_update_package(
+        {"name": "k.exe", "url": "http://s", "kind": "setup"}, "v1.0.0")
+    assert result["installer"].endswith("k.exe")
+    monkeypatch.setattr(app_update, "prepare_installer",
+                        lambda asset, tag, progress=None: (_ for _ in ()).throw(
+                            UpdateError("検証に失敗")))
+    result = MainWindow._fetch_update_package(
+        {"name": "k.exe", "url": "http://s", "kind": "setup"}, "v1.0.0")
+    assert "検証に失敗" in result["error"]
 
 
 def test_startup_auto_check_is_silent_under_pytest(ai_window):
