@@ -72,4 +72,12 @@
   ファイル差し替え成功 → `[Run]` で新プロセスが自動復帰（PID と起動時刻 07:53:12 を確認）
 * `sha256sum` と `koeiro-<tag>-windows-checksums.txt` の値が一致
 * テスト: 1189 passed / 11 skipped（更新機構と setup ビルドに18本追加）
-* 0.13.1 → 0.13.2 の通し更新（実ネットワーク）は、この版のリリース後に追記します
+* **0.13.1 → 0.13.2 の通し更新を実ネットワークで確認**（2026-10-13 08:23 JST）
+  * 更新確認と同じ `check_now` が v0.13.2 を「インストーラあり」で返し、
+    `koeiro-v0.13.2-windows-setup.exe` 48,597,793 バイトを落として sha256 検証を通った
+  * `/VERYSILENT` 適用後、`%LOCALAPPDATA%\Programs\Koeiro\Koeiro.exe` がこの場で作り直した
+    0.13.2 と一致（sha256 先頭16桁 `b7eef92c005b7798`）。インストール先に `koeiro-root.txt` は無い
+  * インストーラが更新後のアプリを起動し、PID が入れ替わった（`Koeiro.exe` 18032）
+  * `%LOCALAPPDATA%\Koeiro\logs\update.log` に `verified` / `launching installer` が残った
+  * 駆動は venv の Python で `sys.frozen` を立てて行いました。GUI のボタン押下そのものは
+    オフスクリーンのテストで分岐のみ検証しています（実クリックの目視確認はしていません）
