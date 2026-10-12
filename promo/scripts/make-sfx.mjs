@@ -152,26 +152,4 @@ const files = [];
   );
 }
 
-// The room the whole film sits in. Rendered to the exact composition length so it
-// never has to be looped, and quiet enough to sit under the voice demo.
-{
-  const length = seconds(27000);
-  const fade = (i) => {
-    const inFrames = seconds(1500);
-    const outFrames = seconds(2000);
-    if (i < inFrames) return ease(i / inFrames);
-    if (i > length - outFrames) return ease((length - i) / outFrames);
-    return 1;
-  };
-  const tremolo = (i) => 0.85 + 0.15 * Math.sin((2 * Math.PI * i) / RATE / 6);
-  const bed = new Float32Array(length);
-  const low = tone(length, 55);
-  const fifth = tone(length, 82.5, 1.1);
-  const air = sweep(noise(length, 0x4b4f4549), () => 220, () => 0.5);
-  for (let i = 0; i < length; i++) {
-    bed[i] = (low[i] * 0.06 + fifth[i] * 0.035 + air[i] * 0.02) * tremolo(i) * fade(i);
-  }
-  files.push(writeWav("bed.wav", [bed, bed.map((v) => v * 0.94)]));
-}
-
 console.log(files.join("\n"));

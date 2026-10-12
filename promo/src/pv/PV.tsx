@@ -58,7 +58,6 @@ const Soundtrack: React.FC = () => {
   const voice = startsAt("voice");
   return (
     <>
-      <Sfx file="bed.wav" from={0} frames={1620} volume={1} />
       <Sfx file="arrive.wav" from={startsAt("arrival")} frames={24} volume={1} />
       <Sfx file="click_blip.wav" from={onTimeline("start", 2812) + CLICK_LAG} frames={6} />
       <Sfx file="click_blip.wav" from={onTimeline("tune", 43687) + CLICK_LAG} frames={6} />
