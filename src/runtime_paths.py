@@ -23,6 +23,12 @@ DATA_ENV = 'KOEIRO_DATA'
 # folder -- so the install folder can be named outright instead of inferred. Users
 # who move the executable keep a working AI by pointing this at their Koeiro folder.
 ROOT_ENV = 'KOEIRO_ROOT'
+# A frozen worker gets its asset tree from the launcher instead of from its own bundle:
+# KoeiroWorker.exe carries torch and the app code, while models/ and vc_models/ (the
+# checkpoints, the MeanVC2 repo it imports by path, the LavaSR weights) sit in the
+# install folder beside it. Only the GUI sets this, when starting a bundled worker, so
+# the GUI's own asset_root keeps pointing at its bundled assets.
+ASSETS_ENV = 'KOEIRO_ASSETS'
 # A packaged build records the folder it was built from, so the executable finds the
 # environment tools/setup_release.py installed even though it sits in dist/Koeiro/
 # with no vc_models beside it. Written by tools/write_build_root.py and bundled.
@@ -42,6 +48,9 @@ def is_frozen():
 def asset_root():
     """Directory holding models/, vc_models/ and the bundled package tree."""
     if is_frozen():
+        override = os.environ.get(ASSETS_ENV)
+        if override:
+            return Path(override)
         return Path(getattr(sys, '_MEIPASS', Path(sys.executable).resolve().parent))
     return Path(__file__).resolve().parents[1]
 
@@ -103,12 +112,17 @@ def model_root():
     A packaged GUI sits in ``dist/Koeiro/`` and bundles no ``models/`` of its own, so
     the optional folders -- Kokoro TTS weights and the environments the installers
     create beside them -- stay in the tree the build recorded. An unfrozen run just
-    uses the source tree it is running from.
+    uses the source tree it is running from. An installed build with no recorded tree
+    uses its own folder when an AI voice pack was installed there, so the GUI checks
+    the same assets the frozen worker loads.
     """
     if is_frozen():
         recorded = build_root()
         if recorded is not None:
             return recorded
+        installed = install_root()
+        if (installed / 'vc_models').is_dir():
+            return installed
     return asset_root()
 
 

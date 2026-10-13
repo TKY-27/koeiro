@@ -166,9 +166,13 @@ py -3.12 tools/setup_release.py
 
 - インストール先は既定で `%LOCALAPPDATA%\Programs\Koeiro`。**ユーザー単位なので管理者権限を
   要求せず、自動更新の再適用が対話なしで成立します**
-- setup.exe は **アプリ本体のみ**同梱です。AI環境と音声モデルは入らないので、AI Voice は
-  別途 `tools/setup_release.py`（Python 3.12 が必要）で導入します。Original と Female DSP は
-  同梱の dll でそのまま動きます
+- setup.exe は **アプリ本体のみ**同梱です。AI は `koeiro-<tag>-ai-pack.exe`（＋分割物）を
+  **同じフォルダに上書きインストール**で入ります（Python 不要・オフライン動作）。
+  入らない場合は Original と Female DSP だけで動きます。AI環境を自前で組むなら
+  `tools/setup_release.py`（Python 3.12 が必要）でも可
+- AIパックの中身: `KoeiroWorker.exe`（torch ごと凍結した AI ワーカー）と変換に必要な
+  チェックポイント・LavaSR・既定声のみ。**声の登録は AI環境が必要なまま**（要
+  `tools/setup_release.py`）
 - ビルド元の絶対パスを記録した `koeiro-root.txt` はステージングから除かれます。除いた
   実体は **インストール先フォルダ**を AI環境の置き場所として探すので、AI環境は
   `Koeiro.exe` の隣（`%LOCALAPPDATA%\Programs\Koeiro\vc_models`）に置く形になります

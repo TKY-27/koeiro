@@ -28,15 +28,26 @@ sources are listed here so the bundle can be reassembled and attributed.
 
 - `vc_models/post_lavasr/vendor/encodec*` and `vendor/bin/encodec.exe`: the
   0.1.1 wheel metadata declares **CC BY-NC 4.0** (NonCommercial), while the
-  current upstream `facebookresearch/encodec` repository is MIT. The shipped
-  enhancer imports the vendored `vocos`, not `encodec`, so leave these files
-  out of the bundle instead of relying on the upstream relabeling.
+  current upstream `facebookresearch/encodec` repository is MIT. Measured with
+  `-X importtime` on a real conversion: `vocos/feature_extractors.py` does
+  `from encodec import EncodecModel` at module level, so the enhancer's import
+  chain **does reach encodec** — but only `EncodecFeatures` would build it, and
+  the LavaSR checkpoint this app uses never selects that extractor. The AI voice
+  pack therefore ships a stub package of our own instead (`tools/build_ai_pack.py`
+  `ENCODEC_STUB`), which raises if anything actually uses it. Verified: with the
+  stub in place the 一括変換(LavaSR) output WAV is byte-for-byte identical to the
+  run against the real package.
 - Beatrice official models, standing art and bundled files: redistribution is
   prohibited by their terms, including free distribution. Users fetch them
   from the official distribution after agreeing to the terms
   (`tools/install_character_model.py --help`).
 - JVS / JVS-MuSiC audio data and paraphernalia: follow their terms; the voice
   data itself is not redistributed.
+- The Windows AI voice pack (`koeiro-<tag>-ai-pack*`) carries only the weights the
+  conversion loads: `fastu2pp_160ms.pt`, `meanvc2_120ms_40ms.safetensors`, `vocos.pt`
+  (each pinned by the shipped voice's `runtime.json` and re-checked at build time).
+  The WavLM checkpoints `wavlm_large.pt` / `wavlm_large_finetune.pth` stay out of it —
+  they belong to voice registration, which still requires `tools/setup_release.py`.
 - Research models and weights under `vc_models/` other than MeanVC2/LavaSR
   (Seed-VC is GPLv3 code; Vevo2 weights are CC-BY-NC-ND-4.0; EZ-VC weights are
   CC-BY-NC-4.0; FlashSR, MossFormer and VoiceFixer checkpoints carry their own

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from tools import build_release_asset
+from tools import build_ai_pack
 from tools import build_windows_setup
 from tools import setup_release
 

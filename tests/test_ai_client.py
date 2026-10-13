@@ -39,6 +39,26 @@ def test_missing_ai_environment_reports_setup(tmp_path):
         worker_python(tmp_path)
 
 
+def test_a_bundled_worker_is_told_where_the_models_live(tmp_path, monkeypatch):
+    """KoeiroWorker.exe carries torch; models/ and vc_models/ sit in the install folder.
+
+    The frozen worker resolves its asset root from its own bundle unless the launcher
+    points it elsewhere, so starting it without KOEIRO_ROOT/KOEIRO_ASSETS would report
+    every checkpoint as missing on an installed build with an AI voice pack.
+    """
+    import src.runtime_paths as runtime_paths
+    installed = tmp_path / 'Koeiro'
+    installed.mkdir()
+    (installed / 'KoeiroWorker.exe').write_bytes(b'MZ')
+    monkeypatch.setattr('src.vc.client.is_frozen', lambda: True)
+    monkeypatch.setattr('src.vc.client.install_root', lambda: installed)
+    monkeypatch.setattr(runtime_paths, 'install_root', lambda: installed)
+    executable, environment = worker_python(installed)
+    assert executable.name == 'KoeiroWorker.exe'
+    assert environment['KOEIRO_ROOT'] == str(installed)
+    assert environment['KOEIRO_ASSETS'] == str(installed)
+
+
 @pytest.mark.skipif(os.name != 'nt', reason='Windows venv redirector')
 def test_direct_worker_keeps_venv_and_is_terminable(monkeypatch):
     root = Path(__file__).resolve().parents[1]

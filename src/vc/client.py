@@ -4,9 +4,9 @@ from pathlib import Path
 import os
 import subprocess
 
-from ..runtime_paths import (asset_root, cache_dir, data_dir, install_root,
-                             is_bundled_worker, is_frozen, worker_environment,
-                             worker_executable)
+from ..runtime_paths import (ASSETS_ENV, ROOT_ENV, asset_root, cache_dir, data_dir,
+                             install_root, is_bundled_worker, is_frozen,
+                             worker_environment, worker_executable)
 from .protocol import send, receive
 
 
@@ -51,8 +51,15 @@ def worker_python(root, model=None):
         bundle = worker_executable()
         if bundle is not None:
             # A frozen worker is not Python: it takes the service arguments directly,
-            # so the module invocation is dropped by ServiceClient.start().
-            return bundle, os.environ.copy()
+            # so the module invocation is dropped by ServiceClient.start(). Its torch
+            # lives in the bundle; models/ and vc_models/ live in the install folder,
+            # so point both roots there instead of letting the worker resolve them
+            # inside its own _internal_worker tree.
+            environment = os.environ.copy()
+            root = str(install_root())
+            environment[ROOT_ENV] = root
+            environment[ASSETS_ENV] = root
+            return bundle, environment
         environment_root = worker_environment()
         if environment_root is None:
             raise RuntimeError('AI環境が見つかりません。tools/setup_release.py を実行してください。')

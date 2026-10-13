@@ -52,6 +52,10 @@
       残っていない（`git rev-list --objects --all` で wav/mp3/m4a/pt/pth/
       safetensors/onnx/bin/env を検索。残っていれば history rewrite が必要）
 - [ ] 配布先（BOOTH・GitHub等）の規約・年齢表示・サポート窓口を記載した
+- [ ] Windows は setup.exe（＋AIパックを出すなら its parts）を作り、`-checksums.txt` を
+      一緒に添付した（実行ファイル版の自動更新は両方が無い版を適用しない）
+- [ ] AIパックに `vendor/encodec` の実体が入っていないこと
+      （`tools/build_ai_pack.py` の `check_stage` が検査する）
 - [ ] 配布物相当のツリーで `tools/setup_release.py --dry-run` が通り、
   Windows と Linux の両方でセットアップ後に起動・変換・停止を確認した
 - [ ] フォルダ配布時は `settings.json`・`logs/` を取り除いた（起動時に再生成される）
@@ -130,13 +134,71 @@ BOOTH の上限は **1ファイル 1.2GB・1商品あたり合計 10GB**（2026-
 （`vc_models/meanvc2/repo/preprocess/ckpts` だけで 1.8GB 超）を1ファイルに収めることは
 できないので、実行ファイル版は次の2点セットで配布します。
 
-1. `koeiro-<tag>-windows-setup.exe` … アプリ本体のみ（現状この setup が 1 ファイル）
-2. AI パック … 未実装。作るまでは setup 単体では **Original / Female DSP のみ**で
-   AI Voice は動きません（`tools/setup_release.py` を使える人に限られます）。
-   AI パックは 1.2GB 以内に切った zip 群とし、アプリ側でローカル取り込みする想定
+1. `koeiro-<tag>-windows-setup.exe` … アプリ本体のみ
+2. `koeiro-<tag>-ai-pack*.exe` / `*.bin` … AIVoice の実行環境とモデル（次節）
 
 BOOTH 販売でもアプリ内蔵の自動更新は GitHub Releases を見にいきます（購入者に
 ネットワークが必要。オフライン完結にしたい場合は setup を再配布する）。
+
+## AI ボイスパック（凍結ワーカー）
+
+`KoeiroWorker.exe` は torch をinternalに凍結した AI ワーカーで、AI環境（venv）も
+Python も要りません。アプリ本体の setup とは別の installer にして、**同じアプリフォルダに
+展開**します（`{app}\KoeiroWorker.exe` + `{app}\_internal_worker\` + `{app}\vc_models\` +
+`{app}\models\user_voices\`）。
+
+```powershell
+# 1. ワーカーを凍結する（AI環境の Python でビルド。GUI用 .venv ではない）
+uv pip install --python vc_models\meanvc2\.venv\Scripts\python.exe pyinstaller
+vc_models\meanvc2\.venv\Scripts\python.exe -m PyInstaller KoeiroWorker.spec --noconfirm
+#    → dist\KoeiroWorker\KoeiroWorker.exe + _internal_worker\（実測 約1.01GB・ビルド 約14分）
+
+# 2. 検証（同じ WAV を venv ワーカーと凍結ワーカーで通して差分を見る）
+.venv\Scripts\python tools\verify_frozen_worker.py --wav promo\public\audio\voice_demo_original.wav
+
+# 3. AIパックの installer を作る（スライス 1.05GB = 1050000000 バイト）
+.venv\Scripts\python tools\build_ai_pack.py --tag v0.13.2
+#    → dist\ai-pack\koeiro-<tag>-ai-pack.exe / -1.bin … と -checksums.txt
+```
+
+実測（v0.13.2）: ステージング 6650ファイル 1385.6 MB → 圧縮後 `koeiro-v0.13.2-ai-pack.exe` 2.8 MB +
+`koeiro-v0.13.2-ai-pack-1.bin` 664.4 MB（計2ファイル）。アプリ本体の setup 46.3 MB と合わせて
+**BOOTH には3ファイル**（各1.2GB上限に十分収まる）。インストール先は 1.6 GB。
+
+- **変換結果は開発環境とビット同一**: `voice_demo_original.wav` 3.44秒を 一括変換(LavaSR)
+  で通すと、環境venvワーカー / `dist` の凍結ワーカー / インストール済みパック、3者の出力 WAV
+  の sha256 がすべて一致（`1526b85b1eb60414`、max_abs_diff 0.0）。逐次変換（streaming）は
+  この照合をしていない
+- 同じ WAV を使う再確認: `tools\verify_frozen_worker.py`（デバイスを開かない・人力聴取なしの
+  app↔worker RPC である旨をレポートに明記する）
+
+- **中身の決め打ち**: 同梱する重みは `models/user_voices/<既定声>/runtime.json` が要求する
+  3点（`fastu2pp_160ms.pt`・`meanvc2_120ms_40ms.safetensors`・`vocos.pt`）だけ。
+  `tools/build_ai_pack.py` の `check_stage` が runtime.json と突き合わせて、欠けていれば弾く
+- **同梱しないもの**: AI環境の venv（凍結で代用）、声の登録が使う
+  `wavlm_large.pt` / `wavlm_large_finetune.pth`（合計 約2.4GB）、`vendor/bin`
+- **`encodec` は同梱できない**: wheel のメタデータが **CC BY-NC 4.0**。しかし
+  `vc_models/post_lavasr/vendor/vocos/feature_extractors.py` が module 冒頭で
+  `from encodec import EncodecModel` するため、実行時に import されていた（importtime 実測）。
+  この配布物では **自作のスタブ**（`tools/build_ai_pack.py` の `ENCODEC_STUB`）に置き換える。
+  実物→スタブの差し替えで 一括変換(LavaSR) の出力 WAV が **ビット同一**（sha256 一致）であることを
+  実測で確認済み。スタブは実際に使われたら `NotImplementedError` で音を出さずに落ちる
+- 購入者への手順: 分割物を**すべて同じフォルダ**に置いて part1 を実行。part1 だけ渡しても壊れる
+- **声の登録はこのパックでは動かない**: 登録は `tools/register_voice.py` を AI環境の
+  Python で実行する作り（`src/gui/voice_registration.py`）。凍結版で登録まで可能にするのは
+  次の検討事項（ワーカー exe に登録モードを持たせる案が最も安い）
+
+### 凍結ワーカーで判明した制約（spec に書いてあるが、消されると再踏する）
+
+- `console=True` が必須。`console=False` は stdout が使えず、プロトコルが死ぬ
+  （GUI は `CREATE_NO_WINDOW` で起動するので窓は出ない）
+- `x_transformers` / `einops` / `einx` / `ema_pytorch` の **.py ソースを同梱する**。
+  TorchScript が `@torch.jit.script` の展開に `inspect.getsource` を使うため、PYZ だけだと
+  `Can't get source for <function softclamp>` で読み込み失敗する
+- `contents_directory='_internal_worker'` で GUI の `_internal` と衝突させない
+- ワーカーは `KOEIRO_ROOT` / `KOEIRO_ASSETS` を GUI から受け取る（`src/vc/client.py`）。
+  これがないと `asset_root()` が自分のバンドル内を見てモデルを見つけられない
+- PyInstaller は 1回 約14分。hidden imports の当たりは `.build/` の importtime 実測から取った
 
 ## ブランド画像
 

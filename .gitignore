@@ -46,9 +46,10 @@ debug_snapshots/
 dist/
 build/
 *.spec
-# The committed build recipe for the Windows/Linux executable is the exception:
-# README documents it, so it is tracked while the local probe specs are not.
+# The committed build recipes are the exception: README and PUBLISHING document them,
+# so the GUI and the frozen AI worker specs are tracked while probe specs are not.
 !Koeiro.spec
+!KoeiroWorker.spec
 # Local scratch: agent/editor markers, ad-hoc probes and headless renders
 .freebuff/
 # PV production assets are regenerable or private; only promo/ code is published.

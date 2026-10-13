@@ -127,6 +127,25 @@ def test_optional_models_are_read_from_the_tree_the_build_recorded(tmp_path, mon
     assert runtime_paths.model_root() == bundle
 
 
+def test_an_installed_build_with_an_ai_pack_uses_its_own_folder(tmp_path, monkeypatch):
+    """The GUI must check the assets the frozen worker loads, not the bundle's copy.
+
+    An AI voice pack installs vc_models/ and models/ next to Koeiro.exe. With no
+    recorded build root, model_root() has to follow them there; leaving it at the
+    bundle would report the pack's weights as missing while the worker uses them fine.
+    """
+    installed = tmp_path / 'Koeiro'
+    bundle = installed / '_internal'
+    bundle.mkdir(parents=True)
+    monkeypatch.setattr(runtime_paths, 'asset_root', lambda: bundle)
+    monkeypatch.setattr(runtime_paths, 'is_frozen', lambda: True)
+    monkeypatch.delenv(runtime_paths.ROOT_ENV, raising=False)
+    assert runtime_paths.model_root() == bundle
+    (installed / 'vc_models').mkdir()
+    assert runtime_paths.model_root() == installed
+    assert runtime_paths.install_root() == installed
+
+
 def test_an_unfrozen_run_takes_its_models_from_the_source_tree(monkeypatch):
     monkeypatch.setattr(runtime_paths, 'is_frozen', lambda: False)
     monkeypatch.setattr(runtime_paths, 'asset_root', lambda: Path('/repo'))
