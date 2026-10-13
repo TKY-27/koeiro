@@ -45,7 +45,9 @@ target=${1:?usage: install-ai-pack.sh <folder holding the Koeiro binary>}
 [ -f "$target/Koeiro" ] || { echo "Koeiro not found in $target - install the app first"; exit 1; }
 here=$(cd "$(dirname "$0")" && pwd)
 if ls "$here"/*checksums.txt >/dev/null 2>&1; then
-  (cd "$here" && sha256sum -c ./*checksums.txt)
+  # One checksums file ships for all three artifacts; the app tar is not in this folder
+  # and `sha256sum -c` would fail the whole check on a buyer who kept the files together.
+  (cd "$here" && grep -- '-linux-ai-pack-' ./*checksums.txt | sha256sum -c -)
 fi
 for part in "$here"/koeiro-*-linux-ai-pack-*.tar.gz; do
   echo "unpacking $(basename "$part") -> $target"

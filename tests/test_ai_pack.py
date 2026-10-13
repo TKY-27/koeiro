@@ -3,7 +3,9 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import sys
+import tarfile
 
 import pytest
 
@@ -231,6 +233,40 @@ def test_the_extracted_worker_tar_is_staged_from_its_inner_folder(tmp_path, monk
     assert code == 0
     assert seen["bundle"] == tmp_path / "build" / "linux-worker" / "KoeiroWorker"
     assert seen["bundle"].name == "KoeiroWorker"  # stage_pack wants the folder holding the exe
+
+
+@pytest.mark.skipif(not (shutil.which("sh") and shutil.which("sha256sum") and shutil.which("tar")),
+                    reason="sh / sha256sum / tar が無い環境（Windows の CI など）では飛ぶ")
+def test_install_ai_pack_verifies_only_the_pack_files_it_has(tmp_path):
+    """A buyer who keeps every download in one folder must still pass the checksum check."""
+    from tools import build_linux_bundles as bundles
+
+    app = tmp_path / "Koeiro"
+    app.mkdir()
+    (app / "Koeiro").write_text("#!/bin/sh\n", "utf-8")
+    pack = tmp_path / "downloads"
+    pack.mkdir()
+    for number, member in ((1, "KoeiroWorker"), (2, "vc_models")):
+        name = f"koeiro-v9.9.9-linux-ai-pack-{number}.tar.gz"
+        inner = tmp_path / f"payload-{number}"
+        inner.mkdir()
+        (inner / member).write_text(f"content {member}\n", "utf-8")
+        with tarfile.open(pack / name, "w:gz") as bundle:
+            bundle.add(inner / member, arcname=member)  # the real parts unpack at the root
+    lines = [f"{hashlib.sha256((pack / name).read_bytes()).hexdigest()}  {name}"
+             for name in ("koeiro-v9.9.9-linux-ai-pack-1.tar.gz",
+                          "koeiro-v9.9.9-linux-ai-pack-2.tar.gz")]
+    lines.append("0" * 64 + "  koeiro-v9.9.9-linux-app.tar.gz")  # not in this folder
+    (pack / "koeiro-v9.9.9-linux-checksums.txt").write_text("\n".join(lines) + "\n", "ascii")
+    script = pack / "install-ai-pack.sh"
+    script.write_text(bundles.INSTALL_SCRIPT, "utf-8", newline="\n")
+
+    # Git Bash's tar takes the target as a forward-slash path; backslashes come out mangled
+    done = subprocess.run(["sh", str(script), app.as_posix()], cwd=pack, capture_output=True,
+                          text=True, timeout=120)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (app / "KoeiroWorker").read_text("utf-8") == "content KoeiroWorker\n"
+    assert (app / "vc_models").read_text("utf-8") == "content vc_models\n"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows では Docker 以外選べない")
