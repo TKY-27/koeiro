@@ -209,6 +209,30 @@ def test_linux_build_script_is_the_same_for_docker_and_a_bare_host():
     assert "--workpath /tmp/pb 1>&2" in worker
 
 
+def test_the_extracted_worker_tar_is_staged_from_its_inner_folder(tmp_path, monkeypatch):
+    """The tar has one top folder, so the staged worker dir is one level down."""
+    from src.version import APP_VERSION
+    from tools import build_linux_bundles as bundles
+
+    seen = {}
+
+    def fake_build_bundle(kind, root, out_path, timeout, engine):
+        Path(out_path).write_bytes(b"\x1f\x8b fake")
+
+    monkeypatch.setattr(bundles, "require_docker", lambda root: None)
+    monkeypatch.setattr(bundles, "build_bundle", fake_build_bundle)
+    monkeypatch.setattr(bundles, "extract",
+                        lambda tar_path, destination: Path(destination))
+    monkeypatch.setattr(bundles, "build_pack",
+                        lambda root, tag, bundle, out_dir, stage_dir:
+                        seen.update(bundle=Path(bundle)) or ([], {"files": 0, "raw_bytes": 0}))
+    code = bundles.main(["--tag", "v" + APP_VERSION, "--kind", "worker", "--engine", "docker",
+                         "--root", str(tmp_path), "--out", str(tmp_path / "out")])
+    assert code == 0
+    assert seen["bundle"] == tmp_path / "build" / "linux-worker" / "KoeiroWorker"
+    assert seen["bundle"].name == "KoeiroWorker"  # stage_pack wants the folder holding the exe
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows では Docker 以外選べない")
 def test_local_engine_refuses_to_run_on_windows(tmp_path):
     from tools import build_linux_bundles

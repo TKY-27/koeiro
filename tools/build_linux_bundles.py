@@ -245,6 +245,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     out_dir = Path(args.out or root / "dist" / "linux")
+    # Before the first bundle is written: --kind worker alone never reaches build_pack's
+    # own mkdir, and the tar has nowhere to land on a clean tree.
+    out_dir.mkdir(parents=True, exist_ok=True)
     engine = args.engine or ("local" if os.name == "posix" else "docker")
     produced = []
     try:
@@ -264,7 +267,8 @@ def main(argv=None):
             else:
                 raw = out_dir / "KoeiroWorker.tar.gz"
                 build_bundle("worker", root, raw, args.timeout, engine)
-                bundle = extract(raw, root / "build" / "linux-worker")
+                # The tar carries one top folder, so the worker dir is one level down
+                bundle = extract(raw, root / "build" / "linux-worker") / "KoeiroWorker"
                 raw.unlink(missing_ok=True)
             parts, staged = build_pack(root, args.tag, bundle, out_dir,
                                        root / "build" / "linux-pack-stage")
