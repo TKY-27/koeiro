@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import sys
 
 import pytest
 
@@ -184,3 +185,32 @@ def test_the_linux_manifest_names_the_linux_artifacts(tmp_path):
 
 def test_pack_asset_names():
     assert build_ai_pack.pack_name("v1.2.3") == "koeiro-v1.2.3-ai-pack-checksums.txt"
+
+
+def test_linux_build_script_is_the_same_for_docker_and_a_bare_host():
+    """One script text, two transports: stdout tar in a container, a file path on CI."""
+    from tools import build_linux_bundles
+
+    app = build_linux_bundles._script("app", root="/work", apt=True)
+    assert "cd /work" in app
+    assert "Koeiro.spec" in app
+    assert "tar -C /tmp/dist -czf - Koeiro" in app
+    # The container is root, so it carries its own runtime libraries; a CI runner
+    # installs the same list in its own step and the script must not try to run apt.
+    assert " ".join(build_linux_bundles.RUNTIME_APT) in app
+    local = build_linux_bundles._script("app", root="/work")
+    assert "apt-get" not in local
+    worker = build_linux_bundles._script("worker", root="/repo", tar="/out/worker.tar.gz")
+    assert "cd /repo" in worker
+    assert "KoeiroWorker.spec" in worker
+    assert "requirements.lock.txt" in worker and "--extra-index-url" in worker
+    assert "tar -C /tmp/dist -czf /out/worker.tar.gz KoeiroWorker" in worker
+    # Every step but the tar stays off stdout, or the gzip stream corrupts.
+    assert "--workpath /tmp/pb 1>&2" in worker
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows では Docker 以外選べない")
+def test_local_engine_refuses_to_run_on_windows(tmp_path):
+    from tools import build_linux_bundles
+    with pytest.raises(SetupError):
+        build_linux_bundles.build_local("app", tmp_path, tmp_path / "out.tar.gz", 60)

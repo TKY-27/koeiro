@@ -236,6 +236,26 @@ stdout に流して受け取ります（NTFS バインドマウントに 1GB 書
   を名前付き引数（`worker_exe="KoeiroWorker"`, `contents_dir="_internal_worker"`）で共用。
   encodec のスタブ差し替えと runtime.json の sha256 照合は Linux でも同じ
 
+Linux の実行ファイルは GitHub Actions でも作れます（`linux-assets` ワークフロー、
+`workflow_dispatch` 限定・既定 dry_run）。Docker のディスクイメージは C: に載るので、
+配布物を増やすたびに C: が太ります。CI はそれを避けられて、`--engine local` で同じ手順を
+ubuntu ランナーの上で実行するだけです。
+
+```powershell
+# 手元（Docker Desktop）: tar を stdout に流して受け取る
+.venv\Scripts\python tools\build_linux_bundles.py --tag v0.13.3 --kind app
+# Linux 本体・CI ランナー上（Docker 不要）
+python tools/build_linux_bundles.py --tag v0.13.3 --kind app --engine local
+# ワーカーを先に自分で凍結済みのときのパック専用（CI の pack ジョブがこの形）
+vc_models/meanvc2/.venv/bin/python -m PyInstaller KoeiroWorker.spec --noconfirm
+python tools/build_linux_bundles.py --tag v0.13.3 --kind pack --worker-dist dist/KoeiroWorker
+```
+
+**`linux-assets` ワークフローは初回実行前の状態です**（ローカルで検証できるのが Docker 経路
+だけで、CI 経路は push して回すしかないため）。dry_run で Artifacts まで見てから
+`gh release upload` のフラグを立ててください。CI の pack ジョブは `tools/setup_release.py`
+で環境ごと作り直すので、実行 Python が手元（3.11）とずれます。
+
 ### 判明していること（Linux ビルド時に効く）
 
 - `Koeiro.spec` は `sys.platform == 'win32'` のときだけ `female_dsp_x64.dll` と

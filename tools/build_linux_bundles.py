@@ -16,6 +16,7 @@ The build happens inside the container's own filesystem: an NTFS bind mount is f
 slow for a 1 GB bundle, so only the finished tar is streamed out to the host.
 """
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -79,7 +80,7 @@ def require_docker(root):
 
 def container(kind, root, out_path, timeout):
     """Run one PyInstaller build in Docker and stream the bundle tar to out_path."""
-    script = _script(kind)
+    script = _script(kind, root="/work", apt=True)
     image = APP_IMAGE if kind == "app" else WORKER_IMAGE
     name = "Koeiro" if kind == "app" else "KoeiroWorker"
     # A fixed, own-suffixed name: nothing here ever touches another container.
@@ -97,47 +98,66 @@ def container(kind, root, out_path, timeout):
     return log
 
 
-def _script(kind):
-    """What runs inside the container: venv, deps, PyInstaller, then tar to stdout.
+def _script(kind, root="/work", apt=False, tar="-"):
+    """venv, dependencies, PyInstaller, then the bundle tar.
 
-    Every step but the final tar writes to stderr: stdout is the artifact stream, and
-    one stray "Selecting previously unselected package" line from apt corrupts the
-    gzip member headers behind it.
+    The same script text drives the container (`tar="-"`, streamed to stdout so we never
+    write a gigabyte through an NTFS bind mount) and a bare Linux host or CI runner
+    (`tar=<path>`). stdout is the artifact stream in the container case, so every step
+    but the tar writes to stderr: one stray "Selecting previously unselected package"
+    line from apt corrupts the gzip member headers behind it.
+
+    `apt` is on for the container: the bundle that was verified end to end was built
+    with those packages present. Off for the local engine, because a CI runner installs
+    them with sudo in its own step and a build script must not assume it may run apt.
     """
-    apt = ("apt-get update -qq && apt-get install -y -qq " + " ".join(RUNTIME_APT)
-           + " 1>&2")
+    head = ("apt-get update -qq && apt-get install -y -qq " + " ".join(RUNTIME_APT)
+            + " 1>&2\n") if apt else ""
     if kind == "app":
-        build = ("python -m venv /tmp/gui 1>&2\n"
-                 "/tmp/gui/bin/pip install --no-cache-dir -q -r requirements.txt "
-                 "pyinstaller 1>&2\n"
-                 "/tmp/gui/bin/python -m PyInstaller Koeiro.spec --noconfirm --log-level WARN "
-                 "--distpath /tmp/dist --workpath /tmp/pb 1>&2\n")
+        venv, spec, name = "/tmp/gui", "Koeiro.spec", "Koeiro"
+        install = (f"{{v}}/bin/pip install --no-cache-dir -q -r {root}/requirements.txt "
+                   "pyinstaller 1>&2\n")
     else:
         # Install straight from the AI environment's own lock, with the CPU torch index
         # as an extra index: the lock pins `torch==2.5.1+cpu`, which plain PyPI does not
         # carry, and installing an unpinned torch first would pull a newer build that the
         # lock then cannot satisfy. Windows-only pins are dropped by the same helper
         # setup_release uses.
-        build = ("python -m venv /tmp/ai 1>&2\n"
-                 "python -c \"import sys; sys.path.insert(0, '/work');"
-                 "from tools.setup_release import filter_lock_lines;"
-                 "open('/tmp/lock.txt','w').write(filter_lock_lines("
-                 "open('/work/vc_models/meanvc2/requirements.lock.txt',"
-                 "encoding='utf-8').read(), False))\" 1>&2\n"
-                 "/tmp/ai/bin/pip install --no-cache-dir -q -r /tmp/lock.txt "
-                 f"--extra-index-url {TORCH_INDEX} 1>&2\n"
-                 "/tmp/ai/bin/pip install --no-cache-dir -q pyinstaller 1>&2\n"
-                 "/tmp/ai/bin/python -m PyInstaller KoeiroWorker.spec --noconfirm "
-                 "--log-level WARN --distpath /tmp/dist --workpath /tmp/pb 1>&2\n")
-    name = "Koeiro" if kind == "app" else "KoeiroWorker"
+        venv, spec, name = "/tmp/ai", "KoeiroWorker.spec", "KoeiroWorker"
+        install = (
+            f"python3 -c \"import sys; sys.path.insert(0, '{root}');"
+            "from tools.setup_release import filter_lock_lines;"
+            "open('/tmp/lock.txt','w').write(filter_lock_lines("
+            f"open('{root}/vc_models/meanvc2/requirements.lock.txt',"
+            "encoding='utf-8').read(), False))\" 1>&2\n"
+            "{v}/bin/pip install --no-cache-dir -q -r /tmp/lock.txt "
+            f"--extra-index-url {TORCH_INDEX} 1>&2\n"
+            "{v}/bin/pip install --no-cache-dir -q pyinstaller 1>&2\n")
+    build = (f"cd {root}\n{head}"
+             "python3 -m venv {v} 1>&2\n" + install.format(v=venv) +
+             f"{{v}}/bin/python -m PyInstaller {spec} --noconfirm --log-level WARN "
+             "--distpath /tmp/dist --workpath /tmp/pb 1>&2\n").format(v=venv)
     # The build root marker records where this machine's tree sits: meaningless, and
     # actively wrong, on a distribution (runtime_paths then looks for a Windows path).
-    return (f"{apt}\n{build}"
+    return (build +
             f"rm -f /tmp/dist/{name}/_internal/koeiro-root.txt "
             f"/tmp/dist/{name}/_internal_worker/koeiro-root.txt\n"
             f"ls -la /tmp/dist/{name} | head -4 >&2\n"
             f"du -sh /tmp/dist/{name} >&2\n"
-            f"tar -C /tmp/dist -czf - {name}\n")
+            f"tar -C /tmp/dist -czf {tar} {name}\n")
+
+
+def build_local(kind, root, out_path, timeout):
+    """Run the same build on this Linux host (a CI runner, or WSL) without Docker."""
+    if os.name == "nt":
+        raise SetupError("--local は Linux 上でしか動きません（Windows は --engine docker）")
+    completed = subprocess.run(["bash", "-ec", _script(kind, root=str(root), tar=str(out_path))],
+                               capture_output=True, text=True, timeout=timeout,
+                               encoding="utf-8", errors="replace")
+    log = (completed.stdout or "") + (completed.stderr or "")
+    if completed.returncode != 0:
+        raise SetupError("ビルドに失敗:\n" + log[-2500:])
+    return log
 
 
 def tar_stream(tar_path, source_dir, arcname, members=None):
@@ -155,11 +175,18 @@ def tar_stream(tar_path, source_dir, arcname, members=None):
     return tar_path
 
 
-def build_app(root, tag, out_dir, timeout=5400):
+def build_bundle(kind, root, out_path, timeout, engine):
+    """Build one frozen Linux bundle, in Docker or on this Linux host."""
+    if engine == "local":
+        return build_local(kind, root, out_path, timeout)
+    return container(kind, root, out_path, timeout)
+
+
+def build_app(root, tag, out_dir, timeout=5400, engine="docker"):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     target = out_dir / f"koeiro-{tag}-linux-app.tar.gz"
-    container("app", root, target, timeout)
+    build_bundle("app", root, target, timeout, engine)
     return target
 
 
@@ -206,36 +233,46 @@ def write_checksums(out_dir, tag, files):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", required=True, help="例: v0.13.3")
-    parser.add_argument("--kind", default="all", choices=("all", "app", "worker"))
+    parser.add_argument("--kind", default="all",
+                        choices=("all", "app", "worker", "pack"))
     parser.add_argument("--root", default=".", help="リポジトリの場所")
     parser.add_argument("--out", default=None, help="出力先（既定: dist/linux）")
     parser.add_argument("--timeout", type=int, default=5400, help="1ビルドの上限秒")
+    parser.add_argument("--engine", default=None, choices=("docker", "local"),
+                        help="既定は Windows=docker / Linux=local（CI・WSL は local）")
+    parser.add_argument("--worker-dist", default=None,
+                        help="--kind pack: 凍結ワーカー済みの dist/KoeiroWorker を指す")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     out_dir = Path(args.out or root / "dist" / "linux")
+    engine = args.engine or ("local" if os.name == "posix" else "docker")
     produced = []
     try:
-        require_docker(root)
+        if engine == "docker":
+            require_docker(root)
         sys.path.insert(0, str(root))
         from src.version import APP_VERSION
         if version_of(args.tag) != APP_VERSION:
             raise SetupError(f"src/version.py の APP_VERSION={APP_VERSION} がタグ {args.tag} と違います")
         if args.kind in ("all", "app"):
-            target = build_app(root, args.tag, out_dir, args.timeout)
+            target = build_app(root, args.tag, out_dir, args.timeout, engine)
             print(f"app: {target} ({target.stat().st_size / 1024 / 1024:.1f} MB)")
             produced.append(target)
-        if args.kind in ("all", "worker"):
-            raw = out_dir / "KoeiroWorker.tar.gz"
-            container("worker", root, raw, args.timeout)
-            bundle = extract(out_dir / "KoeiroWorker.tar.gz", root / "build" / "linux-worker")
+        if args.kind in ("all", "worker", "pack"):
+            if args.worker_dist:
+                bundle = Path(args.worker_dist)
+            else:
+                raw = out_dir / "KoeiroWorker.tar.gz"
+                build_bundle("worker", root, raw, args.timeout, engine)
+                bundle = extract(raw, root / "build" / "linux-worker")
+                raw.unlink(missing_ok=True)
             parts, staged = build_pack(root, args.tag, bundle, out_dir,
                                        root / "build" / "linux-pack-stage")
-            print(f"worker bundle: {staged['files']} files, "
-                  f"{staged['raw_bytes'] / 1024 / 1024:.1f} MB staged")
+            print(f"staged: {staged['files']} files, "
+                  f"{staged['raw_bytes'] / 1024 / 1024:.1f} MB")
             for part in parts:
                 print(f"part: {part} ({part.stat().st_size / 1024 / 1024:.1f} MB)")
             produced.extend(parts)
-            (out_dir / "KoeiroWorker.tar.gz").unlink(missing_ok=True)
         if produced:
             checksums = write_checksums(out_dir, args.tag, produced)
             print(f"checksums: {checksums}")
