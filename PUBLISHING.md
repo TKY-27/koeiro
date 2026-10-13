@@ -200,19 +200,34 @@ vc_models\meanvc2\.venv\Scripts\python.exe -m PyInstaller KoeiroWorker.spec --no
   これがないと `asset_root()` が自分のバンドル内を見てモデルを見つけられない
 - PyInstaller は 1回 約14分。hidden imports の当たりは `.build/` の importtime 実測から取った
 
-## Linux 版（Docker で作る）
+## Linux 版（Docker か GitHub Actions で作る）
 
 PyInstaller は「動かした OS の実行ファイルしか作れない」ので、Linux 用の凍結ビルドは
-Linux で作ります。このリポジトリでは Docker Desktop のコンテナ内ビルドを採用します
-（`tools/build_linux_bundles.py`）。ビルドはコンテナ内の `/tmp` で行い、出来た tar だけを
-stdout に流して受け取ります（NTFS バインドマウントに 1GB 書くのは遅いため）。
+Linux で作ります。経路は2つで、出てくるものは同じです（`tools/build_linux_bundles.py`）。
+
+- **手元（Windows + Docker Desktop）**: `--engine docker`。ビルドはコンテナ内の `/tmp` で
+  行い、出来た tar だけを stdout に流して受け取ります（NTFS バインドマウントに 1GB
+  書くのは遅いため）。Docker のディスクイメージは C: に載るので、成果物を増やすたびに
+  手元の空きが削れる点だけ注意
+- **Linux 上（CI ランナーや WSL）**: `--engine local`。同じスクリプトをそのまま hosts 上で
+  実行します。apt をスクリプト内では走らせないで、ワークフロー側のステップで同名の一覧を
+  入れてください（`RUNTIME_APT` が単一の出所）
 
 ```powershell
 # アプリ本体（凍結 GUI）
 .venv\Scripts\python tools\build_linux_bundles.py --tag v0.13.3 --kind app
-# AI ワーカー + AIパック（2分割 tar.gz）
+# AI ワーカーを凍結して AIパック（2分割 tar.gz）まで
 .venv\Scripts\python tools\build_linux_bundles.py --tag v0.13.3 --kind worker
 ```
+
+```sh
+# Linux 上で、自分で凍結したワーカーからパックだけ
+vc_models/meanvc2/.venv/bin/python -m PyInstaller KoeiroWorker.spec --noconfirm
+python tools/build_linux_bundles.py --tag v0.13.3 --kind pack --worker-dist dist/KoeiroWorker
+```
+
+GitHub Actions 版が `linux-assets` ワークフロー（`workflow_dispatch` 限定・既定 dry_run）で、
+`app` ジョブが上記1・2番目、`pack` ジョブが3番目に対応します。
 
 - アセット名（変えないこと）:
   - `koeiro-<tag>-linux-app.tar.gz` … 凍結 GUI（`Koeiro` + `_internal`）
@@ -235,26 +250,18 @@ stdout に流して受け取ります（NTFS バインドマウントに 1GB 書
 - Windows 側と同じ検査を通ります: `tools/build_ai_pack.py` の `stage_pack` / `check_stage`
   を名前付き引数（`worker_exe="KoeiroWorker"`, `contents_dir="_internal_worker"`）で共用。
   encodec のスタブ差し替えと runtime.json の sha256 照合は Linux でも同じ
-
-Linux の実行ファイルは GitHub Actions でも作れます（`linux-assets` ワークフロー、
-`workflow_dispatch` 限定・既定 dry_run）。Docker のディスクイメージは C: に載るので、
-配布物を増やすたびに C: が太ります。CI はそれを避けられて、`--engine local` で同じ手順を
-ubuntu ランナーの上で実行するだけです。
-
-```powershell
-# 手元（Docker Desktop）: tar を stdout に流して受け取る
-.venv\Scripts\python tools\build_linux_bundles.py --tag v0.13.3 --kind app
-# Linux 本体・CI ランナー上（Docker 不要）
-python tools/build_linux_bundles.py --tag v0.13.3 --kind app --engine local
-# ワーカーを先に自分で凍結済みのときのパック専用（CI の pack ジョブがこの形）
-vc_models/meanvc2/.venv/bin/python -m PyInstaller KoeiroWorker.spec --noconfirm
-python tools/build_linux_bundles.py --tag v0.13.3 --kind pack --worker-dist dist/KoeiroWorker
-```
-
-**`linux-assets` ワークフローは初回実行前の状態です**（ローカルで検証できるのが Docker 経路
-だけで、CI 経路は push して回すしかないため）。dry_run で Artifacts まで見てから
-`gh release upload` のフラグを立ててください。CI の pack ジョブは `tools/setup_release.py`
-で環境ごと作り直すので、実行 Python が手元（3.11）とずれます。
+- **凍結ワーカーが Linux で動くことは実測済み**（空の `python:3.11-bookworm` に libportaudio2
+  だけ入れて `tools/verify_frozen_worker.py --only frozen`、保存済み WAV を RPC で1回変換）。
+  出力は Windows の venv ワーカーと同じ入力に対しサンプル数一致・最大差 18/32768
+  （≒ -66 dBFS、平均差 2.9e-6）。プラットフォーム側の浮動小数の丸め差で、 packaging の
+  ズレではありません。**試聴判定ではなく「同じ計算に乗っている」だけの検査**です
+- **`src/vc` を変えたらワーカーを作り直す**。凍結ワーカーは自分の `src/vc` を中に取り込んで
+  いるので、モデルの重りが同じでも実行ファイルの中身は古くなります。`dist/linux/*.tar.gz`
+  の member 時刻と `git log -1 --format=%ci` を見較べれば、作り直しが要るか分かります
+- `linux-assets` は**初回実行前**です（手元で検証できるのは Docker 経路だけで、CI 経路は
+  push して回すしかありません）。dry_run で Artifacts と `--smoke-test` の結果を見てから
+  `gh release upload` のフラグを立ててください。CI の pack ジョブは `tools/setup_release.py`
+  で環境ごと作り直すため、ワーカーの実行 Python が手元（3.11）とずれます
 
 ### 判明していること（Linux ビルド時に効く）
 
