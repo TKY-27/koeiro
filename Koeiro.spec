@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 import sys
 
 # Female DSP is a Windows x64 binary (the loader verifies the dll against the manifest
@@ -8,11 +9,13 @@ DATA_FILES = [
     ('src/gui/assets', 'src/gui/assets'),
     ('models/user_voices/user_3b11387911244c6e9a013b42fa88a458',
      'models/user_voices/user_3b11387911244c6e9a013b42fa88a458'),
-    # The folder this build was made in: dist/Koeiro/ holds no vc_models, so
-    # the executable reads this to find its AI environment. See
-    # tools/write_build_root.py, which writes it before PyInstaller runs.
-    ('koeiro-root.txt', '.'),
 ]
+# The folder this build was made in: dist/Koeiro/ holds no vc_models, so the executable
+# reads this to find its AI environment. tools/write_build_root.py writes it before a
+# local PyInstaller run; a clean checkout (CI) has none, and listing a missing file
+# makes Analysis fail outright. Either way the distribution builders delete it.
+if os.path.exists(os.path.join(SPECPATH, 'koeiro-root.txt')):
+    DATA_FILES.append(('koeiro-root.txt', '.'))
 if sys.platform == 'win32':
     DATA_FILES += [
         ('src/processors/native/female_dsp_x64.dll', 'src/processors/native'),
