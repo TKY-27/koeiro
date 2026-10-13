@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   app:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -50,14 +50,19 @@ jobs:
         run: >-
           python tools/build_linux_bundles.py --tag "${{ inputs.tag }}"
           --kind app --engine local
-      # tar を解いて offscreen で起動するまでが実測範囲（`--smoke-test` は音声を開かない）。
-      # ここで落ちるなら買い手側でも同じことが起きるので、リリースへ添付しません
-      - name: 凍結アプリを headless で起動確認
+      # 凍結アプリを headless で起動確認。ビルドしたランナー上で走らせても、その
+      # glibc が必要になるのは自明なので意味がありません。ubuntu-24.04 で作ると
+      # GLIBC_2.38 無しの Debian 12 が起動できない実測があり、ビルドは ubuntu-22.04、
+      # 起動確認は一段古い Debian bookworm のコンテナでやります（買い手の下限）
+      - name: Debian bookworm で起動確認
         run: |
-          rm -rf /tmp/koeiro-app
-          mkdir -p /tmp/koeiro-app
-          tar -xzf "dist/linux/koeiro-${{ inputs.tag }}-linux-app.tar.gz" -C /tmp/koeiro-app
-          QT_QPA_PLATFORM=offscreen /tmp/koeiro-app/Koeiro/Koeiro --smoke-test
+          docker run --rm -v "$PWD:/work" -w /work python:3.12-bookworm bash -ec '
+            apt-get update -qq >/dev/null
+            apt-get install -y -qq libportaudio2 libgl1 libegl1 libglib2.0-0 \
+              libxkbcommon0 libdbus-1-3 fontconfig >/dev/null
+            mkdir -p /tmp/app
+            tar -xzf /work/dist/linux/koeiro-${{ inputs.tag }}-linux-app.tar.gz -C /tmp/app
+            QT_QPA_PLATFORM=offscreen /tmp/app/Koeiro/Koeiro --smoke-test'
       - uses: actions/upload-artifact@v4
         with:
           name: koeiro-${{ inputs.tag }}-linux-app
@@ -69,7 +74,7 @@ jobs:
         run: gh release upload "${{ inputs.tag }}" dist/linux/* --clobber
 
   pack:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

@@ -275,6 +275,11 @@ GitHub Actions 版が `linux-assets` ワークフロー（`workflow_dispatch` �
 
 ### 判明していること（Linux ビルド時に効く）
 
+- **ビルドしたマシンの glibc が買い手の下限になる**。ubuntu-24.04 ランナーで凍結すると
+  `libpython3.12.so.1.0: version GLIBC_2.38 not found` で Debian 12 が起動できませんでした
+  （実測: bookworm コンテナで落、ビルド側のランナーでは通る）。ビルドは ubuntu-22.04、
+  起動確認は一段古い Debian bookworm のコンテナで行います（`linux-assets` の
+  「Debian bookworm で起動確認」ステップ）
 - `Koeiro.spec` は `sys.platform == 'win32'` のときだけ `female_dsp_x64.dll` と
   `assets/icon.ico` を入れます（Windows 専用資産）
 - コンテナの stdout は成果物専用。apt や pip の出力が1行でも混ざると gzip のメンバヘッダが
