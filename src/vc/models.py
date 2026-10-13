@@ -43,7 +43,7 @@ DELIVERY_MODES = {
                              detail='話が終わってから変換し、自然寄せ＋LavaSRで仕上げます',
                              delivery='utterance', enhancer='lavasr', experiment='natural'),
     'utterance_fastest': dict(label='一括変換-最速',
-                              detail='一括変換の最速寄せです',
+                              detail='まとめ推論＋ソルバ1ステップで待ち時間を減らします（声色の精度は落ちます）',
                               delivery='utterance', enhancer='lavasr', experiment='fastest'),
 }
 DEFAULT_DELIVERY = 'utterance_lavasr'

@@ -25,10 +25,10 @@ class MeanVC2PhraseBackend(MeanVC2Backend):
         converted = super().process_chunk(audio)
         return self.repair.process(audio, converted) if self.repair is not None else converted
 
-    def select_profile(self, selected):
+    def select_profile(self, selected, steps_allowed=(2,)):
         loaded = getattr(self, 'vc', None) is not None
         previous = self.algorithmic_buffer_ms if loaded else None
-        super().select_profile(selected)
+        super().select_profile(selected, steps_allowed=steps_allowed)
         if self.repair is None:
             return
         mode = selected.get('repair_mode', 'combined')

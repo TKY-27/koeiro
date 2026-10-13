@@ -162,14 +162,21 @@ class MeanVC2Backend(VoiceConversionBackend):
         # misaligned, 0.93 aligned). See notes/meanvc2_alignment.md.
         return self.buffer_frames_ms+self.frontend_latency_ms
 
-    def select_profile(self, selected):
-        """Control/worker-side selection before warmup; reference stays fixed."""
+    def select_profile(self, selected, steps_allowed=(2,)):
+        """Control/worker-side selection before warmup; reference stays fixed.
+
+        ``steps_allowed`` is the caller's explicit budget: the shipped recipe is the
+        two-step solver, and 3 and 4 measured RTF 1.130 and 1.343 (both over the
+        realtime budget), so they are rejected rather than run. A one-step solver is
+        allowed only where the caller asks for it by name -- the utterance route's
+        fastest mode, which trades timbre accuracy for staying under RTF 1 -- and it
+        clears the human-approved flags like any other recipe change.
+        """
         if 'steps' in selected:
             steps = selected['steps']
-            # Only the two-step solver ships. 3 and 4 measured RTF 1.130 and 1.343,
-            # both over the realtime budget, so they are rejected rather than run.
-            if type(steps) is not int or steps != 2:
-                raise ValueError('MeanVC2 supports the 2-step solver only')
+            if type(steps) is not int or steps not in steps_allowed:
+                allowed = '/'.join(str(value) for value in steps_allowed)
+                raise ValueError(f'MeanVC2 supports the {allowed}-step solver only')
             if steps != self.steps:
                 self.steps = steps
                 self.timesteps = [(self.torch.tensor([1-i/steps],device=self.device), self.torch.tensor([1-(i+1)/steps],device=self.device))

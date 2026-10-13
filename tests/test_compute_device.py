@@ -19,6 +19,18 @@ def test_device_defaults_to_auto_and_validates():
             AIParameters(device=bad)
 
 
+def test_utterance_route_gets_at_least_two_threads():
+    """A recorded utterance is throughput-bound; streaming keeps the user's pick."""
+    from src.vc.service import utterance_threads
+    assert utterance_threads(types.SimpleNamespace(threads=1, delivery='utterance')) == 2
+    assert utterance_threads(types.SimpleNamespace(threads=4, delivery='utterance')) == 4
+    assert utterance_threads(types.SimpleNamespace(threads=9, delivery='utterance')) == 4
+    assert utterance_threads(types.SimpleNamespace(threads=0, delivery='utterance')) == 2
+    assert utterance_threads(types.SimpleNamespace(delivery='utterance')) == 2
+    assert utterance_threads(types.SimpleNamespace(threads=1, delivery='streaming')) == 1
+    assert utterance_threads(types.SimpleNamespace(threads=3, delivery='streaming')) == 3
+
+
 def test_device_survives_settings_roundtrip():
     assert AppSettings().ai_device == 'auto'
     assert AppSettings.from_dict({'ai_device': 'cuda'}).ai_device == 'cuda'

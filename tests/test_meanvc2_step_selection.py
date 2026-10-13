@@ -48,3 +48,20 @@ def test_only_the_two_step_solver_is_accepted():
 @pytest.mark.parametrize('steps',[True,1,3,4,5,3.0])
 def test_non_two_step_selection_is_rejected(steps):
     with pytest.raises(ValueError):MeanVC2Backend(1).select_profile({'steps':steps})
+
+
+def test_single_step_solver_needs_an_explicit_budget():
+    """The utterance route's fastest mode asks for one step; nothing else may."""
+    backend=MeanVC2Backend(1)
+    backend.torch=SimpleNamespace(tensor=lambda x, device=None: np.array(x))
+    resets=[];backend.reset=lambda:resets.append(True)
+    backend.stats={'human_approved_offline':True,'streaming_quality_verified':True,'steps':2}
+    with pytest.raises(ValueError):
+        backend.select_profile({'steps':1})
+    backend.select_profile({'steps':1},steps_allowed=(1,2))
+    assert backend.stats['steps']==1 and resets==[True]
+    # A recipe change is never left marked as human-approved.
+    assert not backend.stats['human_approved_offline']
+    assert not backend.stats['streaming_quality_verified']
+    backend.select_profile({'steps':2},steps_allowed=(1,2))
+    assert backend.stats['steps']==2 and resets==[True,True]

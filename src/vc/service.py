@@ -75,6 +75,21 @@ def main():
         run(scheduling,args)
 
 
+def utterance_threads(args):
+    """Torch thread count for this run: the utterance route gets at least two.
+
+    A recorded utterance is throughput-bound -- the whole clip is already in hand and
+    the only question is how long the conversion takes -- while the streaming route is
+    deadline-bound per chunk, where the user's own setting stays exactly as chosen.
+    Measured on the 4-core N150 this app targets: one thread ran the 24 s utterance
+    about 20% slower than two, and four was no faster than two.
+    """
+    threads = int(getattr(args, 'threads', 1) or 1)
+    if getattr(args, 'delivery', 'streaming') == 'utterance':
+        threads = max(threads, 2)
+    return min(max(threads, 1), 4)
+
+
 def resolve_worker_device(requested):
     """Map an AIParameters.device request to 'cuda' or 'cpu' in the worker.
 
@@ -120,7 +135,7 @@ def run(scheduling,args):
                 from .meanvc2_phrase import MeanVC2PhraseBackend as MeanVC2Backend
             else:
                 from .meanvc2 import MeanVC2Backend
-            backend = MeanVC2Backend(threads=args.threads, device=device)
+            backend = MeanVC2Backend(threads=utterance_threads(args), device=device)
         elif runtime['backend'] == 'beatrice_vst':
             from .beatrice_vst import BeatriceVSTBackend
             backend = BeatriceVSTBackend(args.factor)
@@ -158,16 +173,33 @@ def run(scheduling,args):
                 if getattr(backend,'repair',None) is not None:
                     backend.repair.focus = 'ending'
             elif experiment == 'fastest' and runtime.get('backend') == 'meanvc2':
-                # Fastest comparison: single-block inference, frame-by-frame
-                # vocoder decoding and the shortest repair lookahead. Decode
-                # cadence is timing-only: batch-1 output measured identical
-                # to batch-36 for the grouped recipe (max diff 0.0) and
-                # within 5.3e-06 for single-block grouping, while the repair
-                # stays combined with an ending focus. Same DSP chain as
-                # natural otherwise, so blind tests isolate the three timing
-                # changes. Listening verification required.
-                backend.select_profile(dict(selected, vc_group_chunks=1, vocoder_batch_frames=1,
-                                            repair_mode='combined', repair_lookahead_hops=2))
+                if getattr(args, 'delivery', 'streaming') == 'utterance':
+                    # 一括変換-最速: the whole utterance is already recorded, so
+                    # throughput is the only thing that matters -- time-to-first-audio
+                    # is not. That means the tuned grouped recipe (6 blocks per call,
+                    # 36-frame vocoder batch) instead of the single-block one, plus a
+                    # single solver step, which is what actually buys the headroom.
+                    # Measured on the 4-core N150 with a 24 s utterance, both recipes
+                    # in the same window: this one RTF 1.04 where the old single-block
+                    # two-step one was 1.58, and 0.66 versus 0.94 on an otherwise idle
+                    # machine. Absolute RTF on this chip tracks how hot and how busy it
+                    # is, so only same-window comparisons mean anything.
+                    backend.select_profile(dict(selected, vc_group_chunks=6,
+                                                vocoder_batch_frames=36,
+                                                repair_mode='combined',
+                                                repair_lookahead_hops=2, steps=1),
+                                           steps_allowed=(1, 2))
+                else:
+                    # Streaming keeps the latency-oriented cadence: single-block
+                    # inference and frame-by-frame decode. Decode cadence is
+                    # timing-only (batch-1 output measured identical to batch-36 for
+                    # the grouped recipe, max diff 0.0, and within 5.3e-06 for
+                    # single-block grouping), and the repair stays combined with an
+                    # ending focus. Listening verification required.
+                    backend.select_profile(dict(selected, vc_group_chunks=1,
+                                                vocoder_batch_frames=1,
+                                                repair_mode='combined',
+                                                repair_lookahead_hops=2))
                 if getattr(backend,'repair',None) is not None:
                     backend.repair.focus = 'ending'
         send(output, {'status': 'Warming Up'})
