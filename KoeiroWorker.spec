@@ -1,14 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Frozen AI worker: dist/KoeiroWorker/KoeiroWorker.exe + dist/KoeiroWorker/_internal_worker/.
+# Frozen AI worker: dist/KoeiroWorker/KoeiroWorker(.exe) + _internal_worker/.
 #
 # Built with the *AI* environment's interpreter, not the GUI's, because torch is what
 # has to be bundled:
-#   vc_models\meanvc2\.venv\Scripts\python.exe -m PyInstaller KoeiroWorker.spec --noconfirm
+#   Windows: vc_models\meanvc2\.venv\Scripts\python.exe -m PyInstaller KoeiroWorker.spec --noconfirm
+#   Linux:   vc_models/meanvc2/.venv/bin/python -m PyInstaller KoeiroWorker.spec --noconfirm
 #
 # Two choices here are load-bearing and easy to break from the GUI spec:
 #   console=True    the worker speaks a binary protocol over stdin/stdout; a windowed
 #                   bootloader has no usable stdout. The GUI starts it with CREATE_NO_WINDOW.
 #   upx=False       torch ships hundreds of DLLs; packing them is slow and breaks them.
+import os
+import sysconfig
+
+SITE = sysconfig.get_paths()['purelib']
+SOURCE_PACKAGES = ('x_transformers', 'einops', 'einx', 'ema_pytorch')
 
 a = Analysis(
     ['worker.py'],
@@ -24,11 +30,7 @@ a = Analysis(
         # TorchScript compiles these decorators at load time and reads the source with
         # inspect.getsource, which a PYZ archive cannot answer. The .py files sit in the
         # bundle next to the compiled modules (~3 MB) so the worker can build its model.
-        ('vc_models/meanvc2/.venv/Lib/site-packages/x_transformers/*.py', 'x_transformers'),
-        ('vc_models/meanvc2/.venv/Lib/site-packages/einops/*.py', 'einops'),
-        ('vc_models/meanvc2/.venv/Lib/site-packages/einx/*.py', 'einx'),
-        ('vc_models/meanvc2/.venv/Lib/site-packages/ema_pytorch/*.py', 'ema_pytorch'),
-    ],
+    ] + [(os.path.join(SITE, package, '*.py'), package) for package in SOURCE_PACKAGES],
     hiddenimports=[
         # Loaded by files the worker opens *by path* (the MeanVC2 repo tree and the
         # vendored vocos/LavaSR), so modulegraph never sees them. Derived from a real

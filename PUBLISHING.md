@@ -200,6 +200,50 @@ vc_models\meanvc2\.venv\Scripts\python.exe -m PyInstaller KoeiroWorker.spec --no
   これがないと `asset_root()` が自分のバンドル内を見てモデルを見つけられない
 - PyInstaller は 1回 約14分。hidden imports の当たりは `.build/` の importtime 実測から取った
 
+## Linux 版（Docker で作る）
+
+PyInstaller は「動かした OS の実行ファイルしか作れない」ので、Linux 用の凍結ビルドは
+Linux で作ります。このリポジトリでは Docker Desktop のコンテナ内ビルドを採用します
+（`tools/build_linux_bundles.py`）。ビルドはコンテナ内の `/tmp` で行い、出来た tar だけを
+stdout に流して受け取ります（NTFS バインドマウントに 1GB 書くのは遅いため）。
+
+```powershell
+# アプリ本体（凍結 GUI）
+.venv\Scripts\python tools\build_linux_bundles.py --tag v0.13.3 --kind app
+# AI ワーカー + AIパック（2分割 tar.gz）
+.venv\Scripts\python tools\build_linux_bundles.py --tag v0.13.3 --kind worker
+```
+
+- アセット名（変えないこと）:
+  - `koeiro-<tag>-linux-app.tar.gz` … 凍結 GUI（`Koeiro` + `_internal`）
+  - `koeiro-<tag>-linux-ai-pack-1.tar.gz` / `-2.tar.gz` … ワーカー本体とモデル（BOOTH の
+    1ファイル上限に合わせるため2分割。`install-ai-pack.sh` が両方を展開する）
+  - `koeiro-<tag>-linux-checksums.txt` … 上の sha256（`sha256sum -c` 形式）
+  - ※ ソースツリーの `koeiro-<tag>-linux.tar.gz` とは**別名**。更新確認は名前完全一致で
+    選ぶので混同しません（`src/app_update.py: pick_asset`）
+- 買い手側の手順: tar を展開して `./Koeiro/Koeiro`。Debian/Ubuntu 系ではシステムの
+  **libportaudio2** と Qt の実行ライブラリ（`libgl1 libegl1 libglib2.0-0 libxkbcommon0
+  libdbus-1-3 fontconfig`）を要求します（空の Debian コンテナで
+  `QT_QPA_PLATFORM=offscreen Koeiro --smoke-test` を走らせてこの一覧を実測。
+  デスクトップ用途のディストリビューションなら大半は既に入っています）
+- **ビルド元記録 `koeiro-root.txt` はバンドルから削除**して出します（Windows の絶対パスが
+  入ったままだと、インストール先が見つからず AI が動かなくなる）
+- Linux 凍結版の自動更新: Windows のような再インストール程序が無いので、**新版バンドルを
+  落として sha256 検証 → 解凍 → インストール先ディレクトリごと差し替え → 再起動**。
+  実行中の exe を含むディレクトリを rename するのは Linux では合法なので成立します
+  （`src/update_swap.py`、`preserve_dirs` で `vc_models`（AIパック）と `recordings` を残す）
+- Windows 側と同じ検査を通ります: `tools/build_ai_pack.py` の `stage_pack` / `check_stage`
+  を名前付き引数（`worker_exe="KoeiroWorker"`, `contents_dir="_internal_worker"`）で共用。
+  encodec のスタブ差し替えと runtime.json の sha256 照合は Linux でも同じ
+
+### 判明していること（Linux ビルド時に効く）
+
+- `Koeiro.spec` は `sys.platform == 'win32'` のときだけ `female_dsp_x64.dll` と
+  `assets/icon.ico` を入れます（Windows 専用資産）
+- コンテナの stdout は成果物専用。apt や pip の出力が1行でも混ざると gzip のメンバヘッダが
+  壊れて `not in gzip format` になります（`_script` はすべて `1>&2`、`container()` が
+  先頭2バイト `1f 8b` を検査して弾きます）
+
 ## ブランド画像
 
 - `assets/icon.png` / `assets/logo.png` が原本（コミット済み）。編集時はこの2点のみ

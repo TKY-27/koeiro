@@ -166,5 +166,21 @@ def test_check_stage_refuses_a_missing_torch_or_worker(tmp_path):
         build_ai_pack.stage_pack(root, tmp_path / "absent", tmp_path / "stage2")
 
 
+def test_the_linux_manifest_names_the_linux_artifacts(tmp_path):
+    """The same staging builds the Linux pack, so the manifest has to follow."""
+    root, worker = _fake_source(tmp_path)
+    (worker / "KoeiroWorker").write_bytes(b"\x7fELF")
+    stage, _count, _total = build_ai_pack.stage_pack(
+        root, worker, tmp_path / "stage", tag="v9.9.9",
+        worker_exe="KoeiroWorker", contents_dir="_internal_worker")
+    build_ai_pack.check_stage(stage, worker_exe="KoeiroWorker")
+    manifest = json.loads((stage / "koeiro-ai-pack.json").read_text("utf-8"))
+    assert manifest["worker"] == "KoeiroWorker"
+    assert manifest["requires"]["app_asset"] == "koeiro-v9.9.9-linux-app.tar.gz"
+    assert manifest["contents"][0] == "KoeiroWorker"
+    assert build_ai_pack.app_asset("v1.2.3", "KoeiroWorker.exe") == \
+        "koeiro-v1.2.3-windows-setup.exe"
+
+
 def test_pack_asset_names():
     assert build_ai_pack.pack_name("v1.2.3") == "koeiro-v1.2.3-ai-pack-checksums.txt"

@@ -93,19 +93,20 @@ def copy_tree(source, destination, keep=None, skip=()):
         shutil.copy2(path, target)
 
 
-def stage_pack(root, worker_dir, stage, voice=DEFAULT_VOICE, tag="0.0.0"):
+def stage_pack(root, worker_dir, stage, voice=DEFAULT_VOICE, tag="0.0.0",
+               worker_exe="KoeiroWorker.exe", contents_dir="_internal_worker"):
     """Assemble exactly what ships. Returns (stage, file_count, total_bytes)."""
     root, worker_dir, stage = Path(root), Path(worker_dir), Path(stage)
-    if not (worker_dir / "KoeiroWorker.exe").is_file():
-        raise SetupError(f"凍結ワーカーがありません: {worker_dir / 'KoeiroWorker.exe'}"
-                         "（vc_models\\meanvc2\\.venv で KoeiroWorker.spec をビルド）")
+    if not (worker_dir / worker_exe).is_file():
+        raise SetupError(f"凍結ワーカーがありません: {worker_dir / worker_exe}"
+                         "（AI環境の Python で KoeiroWorker.spec をビルド）")
     if stage.exists():
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
-    shutil.copytree(worker_dir, stage / worker_dir.name, symlinks=True)
-    shutil.move(str(stage / worker_dir.name / "KoeiroWorker.exe"), str(stage / "KoeiroWorker.exe"))
-    shutil.move(str(stage / worker_dir.name / "_internal_worker"), str(stage / "_internal_worker"))
-    shutil.rmtree(stage / worker_dir.name)
+    shutil.copytree(worker_dir, stage / "worker", symlinks=True)
+    shutil.move(str(stage / "worker" / worker_exe), str(stage / worker_exe))
+    shutil.move(str(stage / "worker" / contents_dir), str(stage / contents_dir))
+    shutil.rmtree(stage / "worker")
     (stage / "vc_models" / "meanvc2" / "repo").mkdir(parents=True)
     for name in MEANVC2_CODE:
         source = root / "vc_models/meanvc2/repo" / name
@@ -136,16 +137,17 @@ def stage_pack(root, worker_dir, stage, voice=DEFAULT_VOICE, tag="0.0.0"):
         if not (root / source).is_file():
             raise SetupError(f"同梱必須の文書がありません: {source}")
         shutil.copy2(root / source, stage / name)
-    write_manifest(stage, tag, sha256_of(stage / "KoeiroWorker.exe"))
+    write_manifest(stage, tag, sha256_of(stage / worker_exe), worker_exe, contents_dir)
     files = [path for path in stage.rglob("*") if path.is_file()]
     return stage, len(files), sum(path.stat().st_size for path in files)
 
 
-def check_stage(stage, voice=DEFAULT_VOICE):
+def check_stage(stage, voice=DEFAULT_VOICE, worker_exe="KoeiroWorker.exe",
+                contents_dir="_internal_worker"):
     """The pack must not smuggle a development tree, a venv, or CC BY-NC encodec."""
     stage = Path(stage)
     problems = []
-    for name in ("KoeiroWorker.exe", "_internal_worker", "LICENSE.txt",
+    for name in (worker_exe, contents_dir, "LICENSE.txt",
                  "koeiro-ai-pack.json", "models/user_voices/" + voice + "/reference.wav"):
         if not (stage / name).exists():
             problems.append("無い: " + name)
@@ -173,8 +175,8 @@ def check_stage(stage, voice=DEFAULT_VOICE):
                  "vc_models/meanvc2/repo/figs", "vc_models/meanvc2/repo/preprocess/ckpts/wavlm_large.pt"):
         if (stage / name).exists():
             problems.append("同梱不可: " + name)
-    if not (stage / "_internal_worker" / "torch").is_dir():
-        problems.append("torch が凍結されていない（_internal_worker/torch が無い）")
+    if not (stage / contents_dir / "torch").is_dir():
+        problems.append(f"torch が凍結されていない（{contents_dir}/torch が無い）")
     encodec = stage / "vc_models/post_lavasr/vendor/encodec"
     if (encodec / "model.py").is_file() or (encodec / "modules").is_dir():
         problems.append("encodec の実体が残っている（CC BY-NC 4.0）")
@@ -185,21 +187,28 @@ def check_stage(stage, voice=DEFAULT_VOICE):
     return stage
 
 
-def write_manifest(stage, tag, worker_sha256):
+def app_asset(tag, worker_exe):
+    """The app artifact this pack belongs to: the Windows setup or the Linux bundle."""
+    return (f"koeiro-{tag}-windows-setup.exe" if worker_exe.endswith(".exe")
+            else f"koeiro-{tag}-linux-app.tar.gz")
+
+
+def write_manifest(stage, tag, worker_sha256, worker_exe="KoeiroWorker.exe",
+                   contents_dir="_internal_worker"):
     manifest = {
         "app": "Koeiro AI Voice Pack",
         "version": version_of(tag),
         "tag": tag,
-        "requires": {"app_asset": f"koeiro-{tag}-windows-setup.exe"},
-        "worker": "KoeiroWorker.exe",
+        "requires": {"app_asset": app_asset(tag, worker_exe)},
+        "worker": worker_exe,
         "worker_sha256": worker_sha256,
         "voice": DEFAULT_VOICE,
-        "contents": ["KoeiroWorker.exe", "_internal_worker", "vc_models/meanvc2/repo",
+        "contents": [worker_exe, contents_dir, "vc_models/meanvc2/repo",
                      "vc_models/post_lavasr", "models/user_voices", "LICENSE.txt",
                      "README.md", "THIRD_PARTY_NOTICES.md"],
         "excluded": ["encodec (CC BY-NC 4.0: raising stub instead)",
                      "wavlm_large*.pt (voice registration only)",
-                     "the AI virtualenv (frozen into _internal_worker)"],
+                     f"the AI virtualenv (frozen into {contents_dir})"],
     }
     (Path(stage) / "koeiro-ai-pack.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", "utf-8", newline="\n")

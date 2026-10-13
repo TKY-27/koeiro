@@ -77,14 +77,14 @@ def test_frozen_install_picks_the_installer_never_the_source_tree():
     assert app_update.pick_asset(_installer_release(), platform="linux", kind="frozen") is None
 
 
-def test_check_now_says_so_when_a_release_has_no_installer(monkeypatch):
+def test_check_now_says_so_when_a_release_has_no_executable_asset(monkeypatch):
     monkeypatch.setattr(app_update, "current_kind", lambda: "frozen")
     monkeypatch.setattr(app_update, "fetch_latest_release",
                         lambda *args, **kwargs: {"tag_name": "v9.9.9", "assets": [
                             {"name": "koeiro-v9.9.9-windows.zip",
                              "browser_download_url": "http://w", "size": 5}]})
     result = app_update.check_now(current="v0.13.1")
-    assert result["status"] == "error" and "インストーラ" in result["message"]
+    assert result["status"] == "error" and "実行ファイル用の配布" in result["message"]
 
 
 def test_parse_checksums_reads_the_sha256sum_format():
@@ -167,10 +167,124 @@ def test_run_installer_refuses_a_source_checkout(monkeypatch, tmp_path):
         app_update.run_installer_and_restart(tmp_path / "absent.exe")
 
 
-def test_install_dir_is_none_for_a_frozen_build(monkeypatch):
+def test_install_dir_is_none_for_a_frozen_windows_build(monkeypatch):
     from src import runtime_paths
     monkeypatch.setattr(runtime_paths, "is_frozen", lambda: True)
+    monkeypatch.setattr(sys, "platform", "win32")
     assert app_update.install_dir() is None
+
+
+def _linux_release():
+    return {"tag_name": "v1.0.0", "assets": [
+        {"name": "koeiro-v1.0.0-linux.tar.gz", "browser_download_url": "http://l", "size": 20},
+        {"name": "koeiro-v1.0.0-linux-app.tar.gz", "browser_download_url": "http://b", "size": 88},
+        {"name": "koeiro-v1.0.0-linux-checksums.txt", "browser_download_url": "http://c", "size": 1},
+    ]}
+
+
+def test_frozen_linux_picks_the_bundle_not_the_source_tree():
+    asset = app_update.pick_asset(_linux_release(), platform="linux", kind="frozen")
+    assert asset["kind"] == "bundle"
+    assert asset["name"] == "koeiro-v1.0.0-linux-app.tar.gz"
+    assert asset["checksums_name"] == "koeiro-v1.0.0-linux-checksums.txt"
+    # A release-directory install still takes the source tree, and the exact-name match
+    # keeps the two assets from shadowing each other.
+    assert app_update.pick_asset(_linux_release(), platform="linux")["name"] == \
+        "koeiro-v1.0.0-linux.tar.gz"
+    assert app_update.pick_asset(_linux_release(), platform="windows") is None
+
+
+def test_install_dir_points_at_the_bundle_folder_on_linux(monkeypatch, tmp_path):
+    from src import runtime_paths
+    monkeypatch.setattr(runtime_paths, "is_frozen", lambda: True)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "Koeiro" / "Koeiro"))
+    assert app_update.install_dir() == tmp_path / "Koeiro"
+
+
+def _bundle_tar(directory, name="bundle.tar.gz"):
+    """A staged frozen Linux bundle: a launcher plus its _internal tree."""
+    directory = Path(directory)
+    root = directory / "stage-src"
+    (root / "_internal").mkdir(parents=True)
+    (root / "Koeiro").write_text("#!/bin/sh\n", "utf-8")
+    (root / "_internal" / "base_library.zip").write_bytes(b"zip")
+    archive = directory / name
+    with tarfile.open(archive, "w:gz") as bundle:
+        bundle.add(str(root), arcname="Koeiro")
+    return archive
+
+
+def test_check_bundle_needs_the_launcher_and_the_internal_tree(tmp_path):
+    good = tmp_path / "Koeiro"
+    (good / "_internal").mkdir(parents=True)
+    (good / "Koeiro").write_text("x", "utf-8")
+    assert app_update.check_bundle(good) == good
+    (good / "Koeiro").unlink()
+    with pytest.raises(UpdateError):
+        app_update.check_bundle(good)
+
+
+def test_prepare_bundle_downloads_verifies_and_unpacks(monkeypatch, tmp_path):
+    import hashlib
+    monkeypatch.setattr(app_update, "updates_dir", lambda: tmp_path)
+    monkeypatch.setattr(app_update, "log_update", lambda message: None)
+    archive = _bundle_tar(tmp_path)
+    payload = archive.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+
+    def serve(url, destination, progress=None, timeout=120):
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.name.endswith("checksums.txt"):
+            destination.write_text(f"{digest}  koeiro-v1.0.0-linux-app.tar.gz\n", "utf-8")
+        else:
+            destination.write_bytes(payload)
+        return destination
+
+    monkeypatch.setattr(app_update, "download_asset", serve)
+    asset = app_update.pick_asset(_linux_release(), platform="linux", kind="frozen")
+    staging = app_update.prepare_bundle(asset, "v1.0.0")
+    assert (staging / "Koeiro").is_file()
+    assert (staging / "_internal").is_dir()
+    with pytest.raises(UpdateError):
+        app_update.prepare_bundle({"kind": "setup", "url": "http://s"}, "v1.0.0")
+
+
+def test_frozen_linux_plan_carries_the_pack_preservation(monkeypatch, tmp_path, capfd):
+    """An installed AI pack must survive the swap: preserve_dirs goes into the plan."""
+    from src import runtime_paths
+    install = tmp_path / "Koeiro"
+    (install / "_internal").mkdir(parents=True)
+    (install / "Koeiro").write_text("x", "utf-8")
+    staging = tmp_path / "staging" / "Koeiro"
+    (staging / "_internal").mkdir(parents=True)
+    (staging / "Koeiro").write_text("new", "utf-8")
+    launched = []
+    monkeypatch.setattr(runtime_paths, "is_frozen", lambda: True)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sys, "executable", str(install / "Koeiro"))
+    monkeypatch.setattr(app_update.subprocess, "Popen",
+                        lambda command, **kwargs: launched.append(command))
+    plan_path = app_update.begin_update_and_restart(staging, "v1.0.0")
+    plan = json.loads(Path(plan_path).read_text("utf-8"))
+    assert plan["install"] == str(install.resolve())
+    assert "vc_models" in plan["preserve_dirs"]
+    assert launched[0][0] == str(install.resolve() / "Koeiro")
+    assert launched[0][1:] == ["--apply-update", str(plan_path)]
+
+
+def test_swap_install_preserves_the_ai_pack_tree(monkeypatch, tmp_path):
+    install = _install_tree(tmp_path / "install")
+    pack = install / "vc_models" / "meanvc2" / "repo"
+    pack.mkdir(parents=True)
+    (pack / "ckpts.pt").write_bytes(b"weights")
+    staging = _package_tree(tmp_path / "staging")
+    report = update_swap.swap_install(staging, install,
+                                      preserve_dirs=update_swap.BUNDLE_PRESERVE_DIRS)
+    assert (install / "vc_models" / "meanvc2" / "repo" / "ckpts.pt").read_bytes() == b"weights"
+    assert (install / "app.py").read_text("utf-8") == "new"
+    assert Path(report["install"]) == install
 
 
 def test_check_now_reports_found_uptodate_and_errors(monkeypatch):

@@ -1981,8 +1981,10 @@ class MainWindow(QMainWindow):
         if not asset.get("url"):
             self.update_status.setText('配布ファイルが見つかりませんでした')
             return
-        self.update_status.setText('インストーラをダウンロードしています…'
-                                   if asset.get("kind") == "setup" else 'ダウンロードしています…')
+        kind = asset.get("kind")
+        self.update_status.setText('インストーラをダウンロードしています…' if kind == "setup"
+                                   else '更新データをダウンロードしています…' if kind == "bundle"
+                                   else 'ダウンロードしています…')
         self.update_check_btn.setEnabled(False)
         tag = str(pending.get("tag", ""))
         self.files.submit('update_download',
@@ -1993,6 +1995,8 @@ class MainWindow(QMainWindow):
         """Worker thread: download, verify, stage. Returns plain data only."""
         from src import app_update
         try:
+            if asset.get("kind") == "bundle":
+                return {"staging": str(app_update.prepare_bundle(asset, tag))}
             if asset.get("kind") == "setup":
                 installer = app_update.prepare_installer(asset, tag)
                 return {"installer": str(installer)}
@@ -2665,10 +2669,11 @@ class MainWindow(QMainWindow):
             return
         if spec['delivery']=='streaming':
             text=('逐次変換：話しながら120msごとに処理します。\n'
-                  '遅延は小さいですが、带域復元は行いません。')
+                  '遅延は小さいですが、帯域復元は行いません。')
         elif mode=='utterance_fastest':
-            text=('一括変換-最速：推論1ブロック・逐次vocoder・最短先読みで\n'
-                  '固定遅延を約0.6秒に抑えた一括変換です。')
+            text=('一括変換-最速：まとめ推論＋ソルバ1ステップ・スレッド2以上で待ち時間を減らします。\n'
+                  'N150実測（24秒の発話1回）：約16秒（RTF 0.66）。他のアプリがCPUを食っていると1に近づきます。\n'
+                  '速さの代わりに声色の精度は落ちます（帯域復元LavaSRは入ります）。')
         else:
             text=('一括変換：0.8秒の無音で発話を区切り、変換後にLavaSRで帯域を復元します。最大60秒。\n'
                   'N150実測（オフラインWAV）：25秒分に約8.5秒、60秒分に約21秒。'

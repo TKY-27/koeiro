@@ -216,6 +216,27 @@ update-desktop-database ~/.local/share/applications 2>/dev/null || true
 - **Discordの表示はLinuxでも同じです。** アクティビティの画像はDiscord自身がURLから
   取得するため、OS側のアイコン設定とは無関係です（[notes/discord_presence_image.md](notes/discord_presence_image.md)）
 
+### Linux（凍結版のバンドル）
+
+Linux の実行ファイルも作れます。PyInstaller は動かした OS 用の物しか作れないので、
+Docker Desktop を使ってコンテナ内でビルドします（手順は [PUBLISHING.md](PUBLISHING.md)）。
+
+```sh
+#ビルド側（Windows でも Linux でも、Docker Desktop が起動していること）
+python tools/build_linux_bundles.py --tag v0.13.2 --kind app
+python tools/build_linux_bundles.py --tag v0.13.2 --kind worker
+# → dist/linux/koeiro-<tag>-linux-app.tar.gz と -linux-ai-pack-{1,2}.tar.gz
+```
+
+- 展開すると `Koeiro/`（`Koeiro` と `_internal`）が出ます。実行にはシステムの
+  `libportaudio2` と Qt の実行ライブラリ（`libgl1 libegl1 libglib2.0-0 libxkbcommon0
+  libdbus-1-3 fontconfig`）が必要です（空の Debian コンテナで `--smoke-test` を走らせて確認した一覧）
+- AI は `koeiro-<tag>-linux-ai-pack-1.tar.gz` と `-2.tar.gz` を**同じフォルダに展開**して
+  入ります（`sh install-ai-pack.sh <展開先>` が2つまとめて展開します）。Python 不要
+- 凍結版の自動更新は新版バンドルを落として sha256 検証 → インストール先ごと差し替え →
+  再起動です（Linux では実行中の exe があるフォルダの rename が通るので成立します。
+  Windows はロックされるため setup.exe 経由）
+
 ---
 
 ## 🤖 AIエージェントによる自動セットアップ（Codex / Claude Code 用）

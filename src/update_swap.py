@@ -1,12 +1,13 @@
 """Apply a staged update: swap the install dir with backup and rollback.
 
 Standard library only and no Qt/audio/model imports, so `app.py --apply-update`
-can run it in a bare helper process after the GUI has exited (on Windows the
-running executable itself is locked, which is why the swap never happens
-in-process). Only a release directory reaches this module: an installed
-``Koeiro.exe`` updates through its setup program instead, because a copy of the
-exe being replaced can never replace it. Every function here is unit-tested
-against temporary directories.
+can run it in a bare helper process after the GUI has exited. Two install forms
+reach this module: a release directory (a marked source tree copy) and a frozen
+Linux bundle, where renaming the folder that holds a running executable is legal.
+A frozen Windows build never does -- Windows locks the running ``Koeiro.exe`` and
+its DLLs, so that one updates through its setup program instead
+(``src/app_update.py: run_installer_and_restart``). Every function here is
+unit-tested against temporary directories.
 """
 import json
 import logging
@@ -29,6 +30,9 @@ class SwapError(Exception):
 # feature); when dependency pins change, re-run tools/setup_release.py afterwards.
 PRESERVE_FILES = ("settings.json",)
 PRESERVE_DIRS = ("recordings", ".venv", "vc_models/meanvc2/.venv", "vc_models/post_lavasr")
+# A frozen bundle's folder also holds the AI voice pack (worker, checkpoints, LavaSR),
+# which no app package contains, so the whole tree has to survive the swap.
+BUNDLE_PRESERVE_DIRS = ("recordings", "vc_models")
 
 
 def wait_for_exit(pid, timeout=60):
@@ -53,13 +57,27 @@ def _copy_tree(source, destination):
     shutil.copytree(source, destination, symlinks=True, dirs_exist_ok=True)
 
 
-def swap_install(staging, install):
+def _relocate(source, destination):
+    """Move a preserved tree if the filesystem allows it, copy if not.
+
+    The backup sits beside the install folder, so a gigabyte-scale venv or AI pack is
+    a rename here. Copying was the old behaviour and could need a second
+    download-sized copy of torch next to the install.
+    """
+    try:
+        shutil.move(str(source), str(destination))
+    except (OSError, shutil.Error):
+        _copy_tree(source, destination)
+
+
+def swap_install(staging, install, preserve_dirs=None):
     """Replace install with staging; backup + user content preserved.
 
     Returns a small report dict. On failure the previous install is restored
     whenever possible and SwapError is raised.
     """
     staging, install = Path(staging), Path(install)
+    preserved = tuple(preserve_dirs) if preserve_dirs else PRESERVE_DIRS
     if not staging.is_dir() or staging == install:
         raise SwapError("更新パッケージが壊れています")
     if not install.is_dir():
@@ -71,6 +89,7 @@ def swap_install(staging, install):
         os.rename(install, backup)
     except OSError as error:
         raise SwapError(f"バックアップに失敗しました: {error}") from error
+    moved = []
     try:
         shutil.move(str(staging), str(install))
         # User voices: shipped folders refresh from the package, the rest carry over.
@@ -90,11 +109,21 @@ def swap_install(staging, install):
             source = backup / name
             if source.is_file() and not (install / name).exists():
                 shutil.copy2(source, install / name)
-        for name in PRESERVE_DIRS:
+        for name in preserved:
             source = backup / name
-            if source.is_dir() and not (install / name).exists():
-                _copy_tree(source, install / name)
+            destination = install / name
+            if source.is_dir() and not destination.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                _relocate(source, destination)
+                moved.append((source, destination))
     except Exception as error:
+        # Put the relocated trees back so the backup can be restored whole.
+        for source, destination in reversed(moved):
+            try:
+                if destination.exists():
+                    _relocate(destination, source)
+            except (OSError, shutil.Error):
+                pass
         try:
             shutil.rmtree(install, ignore_errors=True)
             if not install.exists():
@@ -128,7 +157,7 @@ def main(plan_path):
     try:
         plan = json.loads(Path(plan_path).read_text("utf-8"))
         wait_for_exit(int(plan["parent_pid"]))
-        report = swap_install(plan["staging"], plan["install"])
+        report = swap_install(plan["staging"], plan["install"], plan.get("preserve_dirs"))
         launch_new(plan["launch"])
     except SwapError as error:
         logging.getLogger("update").error("update failed: %s", error)

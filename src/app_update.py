@@ -20,6 +20,7 @@ Release layout this understands (see PUBLISHING.md):
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -41,6 +42,9 @@ PLATFORM_ASSETS = {
 }
 SETUP_ASSET = "koeiro-{tag}-windows-setup.exe"
 CHECKSUMS_ASSET = "koeiro-{tag}-windows-checksums.txt"
+# A frozen Linux build has no installer to re-run, so it updates from its own bundle.
+BUNDLE_ASSET = "koeiro-{tag}-linux-app.tar.gz"
+BUNDLE_CHECKSUMS_ASSET = "koeiro-{tag}-linux-checksums.txt"
 
 
 class UpdateError(Exception):
@@ -119,9 +123,10 @@ def fetch_latest_release(repo=UPDATE_REPO, timeout=15, allow_prerelease=False):
 def pick_asset(release, platform=None, kind=None):
     """Download candidate for this OS and install form, or None when there is none.
 
-    A frozen install must not take the source tree: it holds no ``Koeiro.exe`` and
-    would destroy the bundle it lands in. So ``kind == "frozen"`` only ever matches
-    the installer asset, and a release without one simply offers no update.
+    A frozen install must not take the source tree: it holds no ``Koeiro`` executable
+    and would destroy the bundle it lands in. So ``kind == "frozen"`` matches only the
+    installer (Windows) or the frozen bundle (Linux), and a release without one simply
+    offers no update.
     """
     if platform is None:
         platform = "windows" if sys.platform == "win32" else (
@@ -133,16 +138,20 @@ def pick_asset(release, platform=None, kind=None):
     tag = str(release.get("tag_name", ""))
     assets = release.get("assets") or []
     if kind == "frozen":
-        if platform != "windows":
+        if platform == "windows":
+            wanted, checksums, asset_kind = (SETUP_ASSET.format(tag=tag),
+                                             CHECKSUMS_ASSET.format(tag=tag), "setup")
+        elif platform == "linux":
+            wanted, checksums, asset_kind = (BUNDLE_ASSET.format(tag=tag),
+                                             BUNDLE_CHECKSUMS_ASSET.format(tag=tag), "bundle")
+        else:
             return None
-        wanted = SETUP_ASSET.format(tag=tag)
-        checksums = CHECKSUMS_ASSET.format(tag=tag)
         for asset in assets:
             name = str(asset.get("name", ""))
             url = asset.get("browser_download_url")
             if name == wanted and url:
                 return {"name": name, "url": url, "size": asset.get("size") or 0,
-                        "kind": "setup",
+                        "kind": asset_kind,
                         "checksums_url": _asset_url(assets, checksums),
                         "checksums_name": checksums}
         return None
@@ -150,11 +159,11 @@ def pick_asset(release, platform=None, kind=None):
     if wanted is None:
         return None
     token, extension = wanted
-    prefix = f"koeiro-{tag}-{token}"
+    expected = f"koeiro-{tag}-{token}{extension}"
     for asset in assets:
         name = str(asset.get("name", ""))
         url = asset.get("browser_download_url")
-        if name.startswith(prefix) and name.endswith(extension) and url:
+        if name == expected and url:
             return {"name": name, "url": url, "size": asset.get("size") or 0,
                     "kind": "package"}
     return None
@@ -305,14 +314,12 @@ def prune_old_installers(keep):
             pass
 
 
-def prepare_installer(asset, tag, progress=None):
-    """Download and verify a setup asset. Runs on a worker thread; returns the path."""
-    if not isinstance(asset, dict) or asset.get("kind") != "setup":
-        raise UpdateError("この実行形式では自動更新できません")
-    name = str(asset.get("name") or SETUP_ASSET.format(tag=tag))
-    checksums_name = str(asset.get("checksums_name") or CHECKSUMS_ASSET.format(tag=tag))
+def _download_verified(asset, tag, progress=None):
+    """Download an asset together with its checksums and verify the digest."""
+    name = str(asset.get("name") or "")
     checksums_url = str(asset.get("checksums_url") or "")
-    if not checksums_url:
+    checksums_name = str(asset.get("checksums_name") or "")
+    if not name or not checksums_url:
         raise UpdateError("この版には検証情報（checksums）が同梱されていないため、自動更新できません")
     checksums_path = updates_dir() / checksums_name
     download_asset(checksums_url, checksums_path, timeout=30)
@@ -326,9 +333,35 @@ def prepare_installer(asset, tag, progress=None):
             checksums_path.unlink()
         except OSError:
             pass
-    prune_old_installers(target)
-    log_update(f"verified {name} ({target.stat().st_size} bytes)")
     return target
+
+
+def prepare_installer(asset, tag, progress=None):
+    """Download and verify a setup asset. Runs on a worker thread; returns the path."""
+    if not isinstance(asset, dict) or asset.get("kind") != "setup":
+        raise UpdateError("この実行形式では自動更新できません")
+    target = _download_verified(asset, tag, progress=progress)
+    prune_old_installers(target)
+    log_update(f"verified {target.name} ({target.stat().st_size} bytes)")
+    return target
+
+
+def prepare_bundle(asset, tag, progress=None):
+    """Download, verify and unpack a frozen Linux bundle. Returns the staging dir.
+
+    The asset name carries the tag and its sha256 came from the same release, so no
+    ``release.json`` check applies here -- the digest is the validation.
+    """
+    if not isinstance(asset, dict) or asset.get("kind") != "bundle":
+        raise UpdateError("この実行形式では自動更新できません")
+    archive = _download_verified(asset, tag, progress=progress)
+    staging = updates_dir() / f"staging-{tag}"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    package = extract_package(archive, staging)
+    check_bundle(package)
+    log_update(f"verified {archive.name} -> {package}")
+    return package
 
 
 def installer_command(setup_path):
@@ -379,11 +412,16 @@ def current_kind():
 def install_dir():
     """Directory an in-place swap would replace, or None when there is none.
 
-    Only a release directory (a marked source tree copy) can be swapped: a frozen
-    install updates through its installer instead, see ``run_installer_and_restart``.
+    A release directory (a marked source tree copy) and a frozen Linux bundle can be
+    swapped: renaming a directory that holds a running executable is legal on Linux.
+    A frozen Windows build cannot be, because Windows locks the running ``Koeiro.exe``
+    and its DLLs, so it updates through its setup program instead
+    (``run_installer_and_restart``).
     """
     from .runtime_paths import asset_root, is_frozen
     if is_frozen():
+        if sys.platform.startswith("linux"):
+            return Path(sys.executable).resolve().parent
         return None
     if (asset_root() / "release.json").is_file():
         return asset_root()
@@ -400,8 +438,22 @@ def updates_dir():
 
 def launch_command():
     """How this running copy was started, for the post-update relaunch."""
+    if getattr(sys, "frozen", False):
+        return [str(Path(sys.executable).resolve())]
     root = Path(__file__).resolve().parents[1]
     return [sys.executable, str(root / "app.py")]
+
+
+def check_bundle(bundle_dir):
+    """A staged frozen Linux bundle: the launcher and its _internal tree."""
+    bundle_dir = Path(bundle_dir)
+    launcher = bundle_dir / "Koeiro"
+    if not launcher.is_file() or not (bundle_dir / "_internal").is_dir():
+        raise UpdateError("更新パッケージが壊れています")
+    if os.name != "nt" and not os.access(str(launcher), os.X_OK):
+        # tar keeps the mode bit; a bundle that lost it would never start.
+        raise UpdateError("更新パッケージが壊れています")
+    return bundle_dir
 
 
 def begin_update_and_restart(staging_dir, version):
@@ -413,19 +465,31 @@ def begin_update_and_restart(staging_dir, version):
     target = install_dir()
     if target is None:
         raise UpdateError("この実行形式では自動更新できません")
-    info = read_package_release(staging_dir)
-    if not _version_matches(info.get("version"), version):
-        raise UpdateError("更新パッケージが壊れています")
+    from .runtime_paths import is_frozen
+    if is_frozen():
+        # A bundle carries no app.py or release.json; prepare_bundle already proved
+        # its sha256 against the release, and check_bundle proves the layout.
+        check_bundle(staging_dir)
+    else:
+        info = read_package_release(staging_dir)
+        if not _version_matches(info.get("version"), version):
+            raise UpdateError("更新パッケージが壊れています")
     plan = {
         "staging": str(Path(staging_dir).resolve()),
         "install": str(Path(target).resolve()),
         "launch": launch_command(),
         "parent_pid": os.getpid(),
     }
+    if is_frozen():
+        from .update_swap import BUNDLE_PRESERVE_DIRS
+        plan["preserve_dirs"] = list(BUNDLE_PRESERVE_DIRS)
     plan_path = Path(staging_dir) / "update-plan.json"
     plan_path.write_text(json.dumps(plan, ensure_ascii=False), "utf-8")
-    root = Path(__file__).resolve().parents[1]
-    command = [sys.executable, str(root / "app.py"), "--apply-update", str(plan_path)]
+    if is_frozen():
+        command = [str(Path(sys.executable).resolve()), "--apply-update", str(plan_path)]
+    else:
+        root = Path(__file__).resolve().parents[1]
+        command = [sys.executable, str(root / "app.py"), "--apply-update", str(plan_path)]
     try:
         if sys.platform == "win32":
             flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
@@ -461,7 +525,7 @@ def check_now(current=APP_VERSION, repo=UPDATE_REPO, timeout=15):
     if asset is None:
         if kind == "frozen":
             return {"status": "error",
-                    "message": "この版には実行ファイル用のインストーラがありません"}
+                    "message": "この版には実行ファイル用の配布がありません"}
         return {"status": "error", "message": "このOS用の配布がありません"}
     notes = str(release.get("body") or "")
     return {"status": "found", "tag": tag, "notes": notes[:2000],
