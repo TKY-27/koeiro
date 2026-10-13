@@ -37,6 +37,9 @@ TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
 # Debian container. README's Linux install steps already ask for libportaudio2.
 RUNTIME_APT = ["libportaudio2", "libgl1", "libegl1", "libglib2.0-0", "libxkbcommon0",
                "libdbus-1-3", "fontconfig"]
+# Names that must arrive executable. The pack is tarred on Windows, where NTFS has no
+# executable bit to record, so the mode is restated by name instead.
+RUNNABLE = ("KoeiroWorker", "Koeiro")
 INSTALL_SCRIPT = """#!/bin/sh
 # Unpack the Koeiro AI voice pack into the folder that holds the Koeiro binary.
 #   sh install-ai-pack.sh /path/to/Koeiro-linux
@@ -162,18 +165,32 @@ def build_local(kind, root, out_path, timeout):
     return log
 
 
+def executable_member(info):
+    """Give the worker binary and the shell scripts their exec bit back.
+
+    NTFS has no executable bit: Python's tarfile records the mode Windows reports
+    (0o666 for a file we just extracted), and GNU tar on the buyer's machine honours
+    that and produces a `KoeiroWorker` nobody can start. Docker's own tar wrote the app
+    bundle with correct modes, so only the pack, packed here on Windows, needs the fix.
+    """
+    if info.isfile() and (info.name.endswith(".sh") or Path(info.name).name in RUNNABLE):
+        info.mode = 0o755
+    return info
+
+
 def tar_stream(tar_path, source_dir, arcname, members=None):
     """Write one gzip tar of `source_dir` (or selected members) with a fixed root name."""
     source_dir = Path(source_dir)
     with tarfile.open(tar_path, "w:gz") as bundle:
         if members is None:
-            bundle.add(str(source_dir), arcname=arcname)
+            bundle.add(str(source_dir), arcname=arcname, filter=executable_member)
         else:
             for relative in members:
                 path = source_dir / relative
                 if not path.exists():
                     raise SetupError(f"tar の対象がありません: {relative}")
-                bundle.add(str(path), arcname=(Path(arcname) / relative).as_posix())
+                bundle.add(str(path), arcname=(Path(arcname) / relative).as_posix(),
+                           filter=executable_member)
     return tar_path
 
 

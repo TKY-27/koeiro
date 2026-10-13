@@ -269,6 +269,27 @@ def test_install_ai_pack_verifies_only_the_pack_files_it_has(tmp_path):
     assert (app / "vc_models").read_text("utf-8") == "content vc_models\n"
 
 
+def test_the_pack_tar_keeps_the_worker_executable(tmp_path):
+    """NTFS records no exec bit, so the pack must restate it or the buyer can't start it."""
+    from tools import build_linux_bundles as bundles
+
+    stage = tmp_path / "stage"
+    (stage / "_internal_worker").mkdir(parents=True)
+    for name in ("KoeiroWorker", "install-ai-pack.sh", "README.md"):
+        (stage / name).write_text("x\n", "utf-8")
+    (stage / "_internal_worker" / "base.so").write_text("x\n", "utf-8")
+    tar = tmp_path / "koeiro-v9.9.9-linux-ai-pack-1.tar.gz"
+    bundles.tar_stream(tar, stage, ".", members=("KoeiroWorker", "install-ai-pack.sh",
+                                                 "README.md", "_internal_worker"))
+    with tarfile.open(tar, "r:gz") as bundle:
+        modes = {member.name: member.mode & 0o111 for member in bundle.getmembers()
+                 if member.isfile()}
+    assert modes["KoeiroWorker"] == 0o111
+    assert modes["install-ai-pack.sh"] == 0o111
+    assert modes["README.md"] == 0
+    assert modes["_internal_worker/base.so"] == 0
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows では Docker 以外選べない")
 def test_local_engine_refuses_to_run_on_windows(tmp_path):
     from tools import build_linux_bundles

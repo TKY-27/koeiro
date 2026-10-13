@@ -241,6 +241,10 @@ GitHub Actions 版が `linux-assets` ワークフロー（`workflow_dispatch` �
   libdbus-1-3 fontconfig`）を要求します（空の Debian コンテナで
   `QT_QPA_PLATFORM=offscreen Koeiro --smoke-test` を走らせてこの一覧を実測。
   デスクトップ用途のディストリビューションなら大半は既に入っています）
+- AIパックには `install-ai-pack.sh` が同梱されます: 第1引数のフォルダ（`Koeiro` が有るところ）
+  へ2つの tar を展開します。チェックサム1枚に3成果物ぶんを書くので、このスクリプトは
+  `-linux-ai-pack-` の行だけ `sha256sum -c` に通します（買い手が全部を同じフォルダに置いた
+  とき、同梱されていない app.tar の行で `set -e` がインストールを止めていた）
 - **ビルド元記録 `koeiro-root.txt` はバンドルから削除**して出します（Windows の絶対パスが
   入ったままだと、インストール先が見つからず AI が動かなくなる）
 - Linux 凍結版の自動更新: Windows のような再インストール程序が無いので、**新版バンドルを
