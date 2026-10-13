@@ -125,7 +125,8 @@ def plan_steps(root, with_models=True, with_lavasr=True, recreate=False):
                       [sys.executable, "-m", "venv", "vc_models/meanvc2/.venv"]))
     steps.append(("AI: torch 取得", [str(worker), "-m", "pip", "install", "torch", "torchaudio",
                                      "--index-url", TORCH_INDEX]))
-    steps.append(("AI: 固定依存関係", [str(worker), "-m", "pip", "install", "-r", "<filtered-lock>"]))
+    steps.append(("AI: 固定依存関係", [str(worker), "-m", "pip", "install", "-r",
+                                      "<filtered-lock>", "--extra-index-url", TORCH_INDEX]))
     if with_lavasr:
         steps.append(("LavaSR 取得", [str(gui), "tools/install_lavasr.py"]))
     if with_models and not (Path(root) / "vc_models" / "meanvc2" / "repo").is_dir():
@@ -145,7 +146,12 @@ def install_filtered_lock(worker, root, dry_run):
         stream.write(filtered)
         temporary = stream.name
     try:
-        run([str(worker), "-m", "pip", "install", "-r", temporary], root)
+        # The lock pins `torch==2.5.1+cpu`, which plain PyPI does not carry. On this
+        # machine that was invisible (torch already matched); on a clean runner the
+        # unpinned torch step above installs a newer build and the pin then has
+        # nowhere to resolve from.
+        run([str(worker), "-m", "pip", "install", "-r", temporary,
+             "--extra-index-url", TORCH_INDEX], root)
     finally:
         Path(temporary).unlink(missing_ok=True)
 
