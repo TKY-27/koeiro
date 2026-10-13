@@ -56,6 +56,12 @@
       一緒に添付した（実行ファイル版の自動更新は両方が無い版を適用しない）
 - [ ] AIパックに `vendor/encodec` の実体が入っていないこと
       （`tools/build_ai_pack.py` の `check_stage` が検査する）
+- [ ] **版数を上げた後は凍結ビルドを作り直した**（`src/version.py` はバンドルの中に入る。
+      名前だけ新版の tar を添付すると、中身は旧版と答えて自分自身へ更新をかけようとする）
+- [ ] Linux の実行ファイル版を出すなら `dist/linux/` の3点（app tar・パック2分割・
+      checksums）を添付した。パックの `KoeiroWorker` に実行ビットが付いていることも
+      確認する（Windows 上で tar すると NTFS がモードを持たないので、
+      `tools/build_linux_bundles.py` の `executable_member` が名前で 0755 を戻す）
 - [ ] 配布物相当のツリーで `tools/setup_release.py --dry-run` が通り、
   Windows と Linux の両方でセットアップ後に起動・変換・停止を確認した
 - [ ] フォルダ配布時は `settings.json`・`logs/` を取り除いた（起動時に再生成される）
