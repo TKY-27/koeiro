@@ -239,7 +239,10 @@ GitHub Actions 版が `linux-assets` ワークフロー（`workflow_dispatch` �
   - `koeiro-<tag>-linux-app.tar.gz` … 凍結 GUI（`Koeiro` + `_internal`）
   - `koeiro-<tag>-linux-ai-pack-1.tar.gz` / `-2.tar.gz` … ワーカー本体とモデル（BOOTH の
     1ファイル上限に合わせるため2分割。`install-ai-pack.sh` が両方を展開する）
-  - `koeiro-<tag>-linux-checksums.txt` … 上の sha256（`sha256sum -c` 形式）
+  - `koeiro-<tag>-linux-checksums.txt` … 上の sha256（`sha256sum -c` 形式）。
+    **アプリバンドルを含む一式のときだけこの名前**（実行ファイル版の自動更新が読む名前）。
+    パックだけのビルドは `koeiro-<tag>-linux-ai-pack-checksums.txt` に出す。CI は app/pack
+    の2ジョブが同じリリースへ上げるので、同名だと後の物が前者を潰して app の行が消える
   - ※ ソースツリーの `koeiro-<tag>-linux.tar.gz` とは**別名**。更新確認は名前完全一致で
     選ぶので混同しません（`src/app_update.py: pick_asset`）
 - 買い手側の手順: tar を展開して `./Koeiro/Koeiro`。Debian/Ubuntu 系ではシステムの
@@ -268,10 +271,12 @@ GitHub Actions 版が `linux-assets` ワークフロー（`workflow_dispatch` �
 - **`src/vc` を変えたらワーカーを作り直す**。凍結ワーカーは自分の `src/vc` を中に取り込んで
   いるので、モデルの重りが同じでも実行ファイルの中身は古くなります。`dist/linux/*.tar.gz`
   の member 時刻と `git log -1 --format=%ci` を見較べれば、作り直しが要るか分かります
-- `linux-assets` は**初回実行前**です（手元で検証できるのは Docker 経路だけで、CI 経路は
-  push して回すしかありません）。dry_run で Artifacts と `--smoke-test` の結果を見てから
-  `gh release upload` のフラグを立ててください。CI の pack ジョブは `tools/setup_release.py`
-  で環境ごと作り直すため、ワーカーの実行 Python が手元（3.11）とずれます
+- `linux-assets` は v0.13.3 で初実行しました（**app 1m39s / pack 7m26s**、ubuntu-22.04）。
+  通るまでに落とした原因は上の「判明していること」と、コミット履歴の
+  `linux-assets` 系メッセージに1件ずつ書いてあります。dry_run で Artifacts と
+  bookworm 起動確認を見てから `gh release upload` のフラグを立てます。CI の pack ジョブは
+  `tools/setup_release.py` で環境ごと作り直すため、ワーカーの実行 Python が手元（3.11）と
+  ずれます。**成果物はリリースへ自動では上がりません**（既定が dry_run）
 
 ### 判明していること（Linux ビルド時に効く）
 

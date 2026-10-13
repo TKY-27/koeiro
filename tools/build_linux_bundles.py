@@ -50,7 +50,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 if ls "$here"/*checksums.txt >/dev/null 2>&1; then
   # One checksums file ships for all three artifacts; the app tar is not in this folder
   # and `sha256sum -c` would fail the whole check on a buyer who kept the files together.
-  (cd "$here" && grep -- '-linux-ai-pack-' ./*checksums.txt | sha256sum -c -)
+  # -h: a folder may hold two checksums files (the bundle's and the pack's), and grep
+  # would prefix matches with the file name, which sha256sum -c cannot parse.
+  (cd "$here" && grep -h -- '-linux-ai-pack-' ./*checksums.txt | sha256sum -c -)
 fi
 for part in "$here"/koeiro-*-linux-ai-pack-*.tar.gz; do
   echo "unpacking $(basename "$part") -> $target"
@@ -242,8 +244,22 @@ def build_pack(root, tag, worker_bundle, out_dir, stage_dir, voice=DEFAULT_VOICE
     return [first, second], {"files": count, "raw_bytes": total}
 
 
+def checksums_name(tag, files):
+    """Which checksums file a produced set may write.
+
+    ``koeiro-<tag>-linux-checksums.txt`` is the name the in-app updater reads for the
+    bundle, so only a set that actually holds the app bundle may use it. A pack-only
+    run (the CI `pack` job) writes beside it -- both jobs upload to the same release,
+    and the second would otherwise clobber the first with a file missing the app line.
+    """
+    names = [Path(item).name for item in files]
+    if f"koeiro-{tag}-linux-app.tar.gz" in names:
+        return f"koeiro-{tag}-linux-checksums.txt"
+    return f"koeiro-{tag}-linux-ai-pack-checksums.txt"
+
+
 def write_checksums(out_dir, tag, files):
-    path = Path(out_dir) / f"koeiro-{tag}-linux-checksums.txt"
+    path = Path(out_dir) / checksums_name(tag, files)
     lines = [f"{sha256_of(item)}  {Path(item).name}" for item in files]
     path.write_text("\n".join(lines) + "\n", "ascii", newline="\n")
     return path

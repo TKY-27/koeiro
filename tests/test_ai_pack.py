@@ -258,6 +258,10 @@ def test_install_ai_pack_verifies_only_the_pack_files_it_has(tmp_path):
                           "koeiro-v9.9.9-linux-ai-pack-2.tar.gz")]
     lines.append("0" * 64 + "  koeiro-v9.9.9-linux-app.tar.gz")  # not in this folder
     (pack / "koeiro-v9.9.9-linux-checksums.txt").write_text("\n".join(lines) + "\n", "ascii")
+    # Two checksums files in one folder is the normal CI shape (app job and pack job
+    # each write their own); grep must not prefix matches with the file name.
+    (pack / "koeiro-v9.9.9-linux-ai-pack-checksums.txt").write_text("\n".join(lines[:2]) + "\n",
+                                                                   "ascii")
     script = pack / "install-ai-pack.sh"
     script.write_text(bundles.INSTALL_SCRIPT, "utf-8", newline="\n")
 
@@ -267,6 +271,17 @@ def test_install_ai_pack_verifies_only_the_pack_files_it_has(tmp_path):
     assert done.returncode == 0, done.stdout + done.stderr
     assert (app / "KoeiroWorker").read_text("utf-8") == "content KoeiroWorker\n"
     assert (app / "vc_models").read_text("utf-8") == "content vc_models\n"
+
+
+def test_only_a_set_with_the_app_bundle_may_write_the_bundle_checksums():
+    """CI uploads from two jobs into one release; the pack job must not clobber the app line."""
+    from tools import build_linux_bundles as bundles
+
+    pack = [Path("koeiro-v1.2.3-linux-ai-pack-1.tar.gz"),
+            Path("koeiro-v1.2.3-linux-ai-pack-2.tar.gz")]
+    assert bundles.checksums_name("v1.2.3", pack) == "koeiro-v1.2.3-linux-ai-pack-checksums.txt"
+    with_app = pack + [Path("koeiro-v1.2.3-linux-app.tar.gz")]
+    assert bundles.checksums_name("v1.2.3", with_app) == "koeiro-v1.2.3-linux-checksums.txt"
 
 
 def test_the_pack_tar_keeps_the_worker_executable(tmp_path):
