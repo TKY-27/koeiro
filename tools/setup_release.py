@@ -179,13 +179,16 @@ def fetch_models(root, dry_run):
             print(f"  {error}")
             missing.append(relative)
     if not dry_run:
-        # ECAPA finetune lives on Google Drive; the direct link needs a confirm
-        # token for large files, so a failed fetch falls back to manual steps.
+        # ECAPA finetune lives on Google Drive. The plain `uc?export=download` link
+        # answers a confirm page for large files, so it has to go through the
+        # usercontent endpoint with confirm=t; a failed fetch still falls back to
+        # manual steps.
         ecapa = Path(root) / "vc_models" / "meanvc2" / "repo" / "preprocess" / "ckpts" / "wavlm_large_finetune.pth"
         if not (ecapa.is_file() and ecapa.stat().st_size >= 1024 * 1024):
             print("  ECAPA finetune を取得します（失敗時は手動手順を表示）")
             try:
-                direct = f"https://drive.google.com/uc?export=download&id={ECAPA_DRIVE_ID}"
+                direct = (f"https://drive.usercontent.google.com/download"
+                          f"?id={ECAPA_DRIVE_ID}&export=download&confirm=t")
                 if not download(direct, ecapa):
                     raise SetupError("confirm が必要です")
             except SetupError:
