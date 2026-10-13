@@ -138,10 +138,25 @@ gh release upload v1.0.0 dist\setup\koeiro-v1.0.0-windows-setup.exe `
 BOOTH の上限は **1ファイル 1.2GB・1商品あたり合計 10GB**（2026-03-09 時点。
 `booth.pixiv.help` のアップロード容量制限）。torch 環境（実測 2.2GB）とモデル
 （`vc_models/meanvc2/repo/preprocess/ckpts` だけで 1.8GB 超）を1ファイルに収めることは
-できないので、実行ファイル版は次の2点セットで配布します。
+できないので、**OSごとに1 ZIP** にまとめます（v0.13.3 実測）。
 
-1. `koeiro-<tag>-windows-setup.exe` … アプリ本体のみ
-2. `koeiro-<tag>-ai-pack*.exe` / `*.bin` … AIVoice の実行環境とモデル（次節）
+| ZIP | 中身 | 大きさ |
+|---|---|---|
+| `Koeiro_<tag>_Windows.zip` | setup.exe・`-windows-checksums.txt`・ai-pack.exe・ai-pack-1.bin・ai-pack-checksums・入手案内 | 748.2 MB |
+| `Koeiro_<tag>_Linux.zip` | app tar・ai-pack 2分割・`-linux-checksums.txt`・入手案内 | 910.7 MB |
+
+- どちらも上限の内側（最大の中身は ai-pack-1.bin 696.7 MB）。2ファイルを1商品にしても、
+  Windows用と Linux用で商品を分けても容量は足ります
+- ZIP は **無圧縮（stored）**。中身がすでに gzip / Inno で圧縮済みなので、deflate は
+  CPU を溶くだけでサイズは減りません
+- **アーカイブのルートはフラット**にします。`ai-pack.exe` は `ai-pack-1.bin` を同じ
+  フォルダで探しますし、`install-ai-pack.sh` は2つの tar と checksums を同じフォルダで
+  検証して展開するためです（階層を1つ入れると買い手が「データが見つからない」になる）
+- ZIP 自身の sha256 も `Koeiro_<tag>_booth-checksums.txt` に出すので、アップロード後の
+  突き合わせ（転送で壊れていないか）に使えます
+- 入手案内.txt は**実測した範囲のことだけ**書きます（声の登録が凍結ビルドではできない、
+  Linux の実機音声デバイス確認をしていない、など）。書かないのは許せても、間違ったことを
+  書くのは返品とトラブルになります
 
 BOOTH 販売でもアプリ内蔵の自動更新は GitHub Releases を見にいきます（購入者に
 ネットワークが必要。オフライン完結にしたい場合は setup を再配布する）。
