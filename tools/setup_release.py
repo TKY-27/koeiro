@@ -27,17 +27,19 @@ KNN_WAVLM_URL = "https://github.com/bshall/knn-vc/releases/download/v0.1/WavLM-L
 ECAPA_DRIVE_ID = "1-aE1NfzpRCLxA4GUxX9ITI3F9LlbtEGP"
 
 # (package-relative destination, download URL). None means "clone the repo first".
+# The HF repo keeps the weights flat at its root, while the code reads them from the
+# MeanVC2 git repo's folder layout, so destination and URL only share the file name.
 MODEL_FILES = [
     ("vc_models/meanvc2/repo/preprocess/ckpts/fastu2pp_80ms.pt",
-     f"{MEANVC2_HF}/preprocess/ckpts/fastu2pp_80ms.pt"),
+     f"{MEANVC2_HF}/fastu2pp_80ms.pt"),
     ("vc_models/meanvc2/repo/preprocess/ckpts/fastu2pp_160ms.pt",
-     f"{MEANVC2_HF}/preprocess/ckpts/fastu2pp_160ms.pt"),
+     f"{MEANVC2_HF}/fastu2pp_160ms.pt"),
     ("vc_models/meanvc2/repo/ckpts/pretrained_models/meanvc2_40ms_40ms.safetensors",
-     f"{MEANVC2_HF}/ckpts/pretrained_models/meanvc2_40ms_40ms.safetensors"),
+     f"{MEANVC2_HF}/meanvc2_40ms_40ms.safetensors"),
     ("vc_models/meanvc2/repo/ckpts/pretrained_models/meanvc2_120ms_40ms.safetensors",
-     f"{MEANVC2_HF}/ckpts/pretrained_models/meanvc2_120ms_40ms.safetensors"),
+     f"{MEANVC2_HF}/meanvc2_120ms_40ms.safetensors"),
     ("vc_models/meanvc2/repo/ckpts/vocos/vocos.pt",
-     f"{MEANVC2_HF}/ckpts/vocos/vocos.pt"),
+     f"{MEANVC2_HF}/vocos.pt"),
     ("vc_models/meanvc2/repo/preprocess/ckpts/wavlm_large.pt", KNN_WAVLM_URL),
 ]
 
