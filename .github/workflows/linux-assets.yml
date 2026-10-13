@@ -87,9 +87,14 @@ jobs:
       # AI 環境・MeanVC2 のリポジトリとチェックポイント・LavaSR を揃える。
       # setup_release が作った vc_models/meanvc2/.venv の python で凍結するので、
       # CI のワーカーは実行環境の Python バージョンが手元（3.11）とずれる点に注意。
-      # setup_release は LavaSR を uv + git で取りに来る（ubuntu ランナーに uv は無い）
-      - name: uv を入れる
-        run: python -m pip install --quiet uv
+      # setup_release は LavaSR を uv + git で取りに来る（ubuntu ランナーに uv は無い）。
+      # setup_release の検証は sounddevice を import するので libportaudio も要る
+      # （PortAudio library not found で落ちた実測）
+      - name: uv と PortAudio を入れる
+        run: |
+          python -m pip install --quiet uv
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libportaudio2
       - name: AI 環境とモデルを揃える
         run: python tools/setup_release.py
       - name: ワーカーを凍結する
