@@ -70,7 +70,9 @@ class AppSettings:
     voice_mode: str = "ai_voice"
     ai_model: str = DEFAULT_AI_MODEL
     ai_quality: str = "low_latency"
-    ai_threads: int = 1
+    # The recommended set already picks 2 threads for the shipped MeanVC2 voice, so
+    # the initial value matches it instead of starting one step behind.
+    ai_threads: int = 2
     ai_device: str = "auto"
     ai_brightness: float = 50.0
     ai_low_cut: bool = True
