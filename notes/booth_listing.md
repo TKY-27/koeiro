@@ -1,7 +1,7 @@
-# BOOTH 出品の下書き（v0.13.3）
+# BOOTH 出品の下書き（v0.13.4）
 
 実測値だけ入れてあります。文体・販促の言い回しはここで調整してください。
-ファイルの sha256 は GitHub の計算した digest と一致するところまで確認済みです。
+ファイルの sha256 は手元で計算した値です（GitHub へ上げた後の突き合わせは未実施）。
 
 ---
 
@@ -12,20 +12,22 @@
 
 | ファイル | 大きさ | 中身 |
 |---|---|---|
-| `koeiro-v0.13.3-windows-setup.exe` | 46.3 MB | Windows のアプリ本体（AI同梱なし） |
-| `koeiro-v0.13.3-windows-checksums.txt` | 99 B | 上の sha256（アプリの自動更新が読む） |
-| `koeiro-v0.13.3-ai-pack.exe` | 2.8 MB | Windows 用 AIパックのインストーラ本体 |
-| `koeiro-v0.13.3-ai-pack-1.bin` | 664.4 MB | 同上・分割データ（インストーラと同じフォルダに置く） |
-| `koeiro-v0.13.3-ai-pack-checksums.txt` | 188 B | 上の sha256 |
-| `koeiro-v0.13.3-linux-app.tar.gz` | 101.7 MB | Linux のアプリ本体（凍結 `Koeiro` + `_internal`） |
-| `koeiro-v0.13.3-linux-ai-pack-1.tar.gz` | 406.0 MB | Linux 用 AIパック（凍結 `KoeiroWorker` + `_internal_worker` + `install-ai-pack.sh`） |
-| `koeiro-v0.13.3-linux-ai-pack-2.tar.gz` | 360.8 MB | 同上・モデルデータ（MeanVC2 / LavaSR / 標準ボイス） |
-| `koeiro-v0.13.3-linux-checksums.txt` | 306 B | Linux 3点の sha256（`sha256sum -c` 形式） |
+| `koeiro-v0.13.4-windows-setup.exe` | 46.3 MB | Windows のアプリ本体（AI同梱なし） |
+| `koeiro-v0.13.4-windows-checksums.txt` | 99 B | 上の sha256（アプリの自動更新が読む） |
+| `koeiro-v0.13.4-ai-pack.exe` | 2.8 MB | Windows 用 AIパックのインストーラ本体 |
+| `koeiro-v0.13.4-ai-pack-1.bin` | 664.4 MB | 同上・分割データ（インストーラと同じフォルダに置く） |
+| `koeiro-v0.13.4-ai-pack-checksums.txt` | 188 B | 上の sha256 |
+| `koeiro-v0.13.4-linux-app.tar.gz` | 96.6 MB | Linux のアプリ本体（凍結 `Koeiro` + `_internal`） |
+| `koeiro-v0.13.4-linux-ai-pack-1.tar.gz` | 430.4 MB | Linux 用 AIパック（凍結 `KoeiroWorker` + `_internal_worker` + `install-ai-pack.sh`） |
+| `koeiro-v0.13.4-linux-ai-pack-2.tar.gz` | 360.9 MB | 同上・モデルデータ（MeanVC2 / LavaSR / 標準ボイス） |
+| `koeiro-v0.13.4-linux-checksums.txt` | 306 B | Linux 3点の sha256（`sha256sum -c` 形式） |
 
-* 合計 **約1.58 GB**（BOOTH の合計上限 10 GB に対して余裕）
+* 合計 **約1.60 GB**（BOOTH の合計上限 10 GB に対して余裕）
 * 最大ファイル 664.4 MB（BOOTH の1ファイル上限 1.2 GB を超えないことを計算で確認）
-* 2商品に割るなら: Windows 5ファイル 713 MB / Linux 4ファイル 868 MB。ただし版数を出すたびに
+* 2商品に割るなら: Windows 5ファイル 713.6 MB / Linux 4ファイル 887.9 MB。ただし版数を出すたびに
   両方の商品を更新することになります
+* 数字は MiB（1024 基準）です。BOOTH の画面が出すサイズは 10 進なので少し大きく見えます。
+  アップロード後は、表示サイズではなく同梱の `-checksums.txt` と突き合わせてください
 
 ---
 
@@ -34,7 +36,7 @@
 ### タイトル案
 
 ```
-Koeiro v0.13.3 – 声帯域復元つきリアルタイムボイスチェンジャー（Windows / Linux）
+Koeiro v0.13.4 – 声帯域復元つきリアルタイムボイスチェンジャー（Windows / Linux）
 ```
 
 ### 概要
@@ -43,7 +45,9 @@ Koeiro v0.13.3 – 声帯域復元つきリアルタイムボイスチェンジ�
 マイクの声を、その場で別の声に置き換えるデスクトップアプリです。
 Original・Female DSP・AI Voice の3つのスロットを同時に使えます。
 AI Voice は MeanVC2 + LavaSR で、音声を送って戻すのではなく手元で処理します。
-v0.13.3 から Linux の実行ファイル版も同梱しました。
+Windows と Linux の実行ファイル版を同梱しています。
+v0.13.4 は、実機で出ていた不具合の修正が中心です
+（音声処理の例外、モード切替、声フォルダの読み取り、自動更新の案内）。
 ```
 
 ### できること
@@ -63,7 +67,8 @@ Windows: Windows 10 / 11 の 64bit。インストール後 約1.6 GB
 Linux:   Debian 12 / Ubuntu 22.04 系。インストール後 約1.9 GB。
          システムライブラリとして libportaudio2 と Qt の実行ライブラリ
          （libgl1 libegl1 libglib2.0-0 libxkbcommon0 libdbus-1-3 fontconfig）が必要
-CPU の目安: 一括変換-最速で Intel N150（論理4）が RTF 0.94（同一ウィンドウの実測）。
+CPU の目安: 一括変換-最速で Intel N150（論理4）が RTF 0.94（v0.13.3 の同一ウィンドウ実測。
+         この版で AI の計算そのものは変えていません）
 メモリ: AI ワーカーが約 0.9 GB（実測 869 MB）
 ```
 
@@ -77,7 +82,7 @@ CPU の目安: 一括変換-最速で Intel N150（論理4）が RTF 0.94（同�
 3. Koeiro.exe を起動
 
 【Linux】
-1. koeiro-v0.13.3-linux-app.tar.gz を展開 → `Koeiro/Koeiro`
+1. koeiro-v0.13.4-linux-app.tar.gz を展開 → `Koeiro/Koeiro`
 2. ai-pack-1 と ai-pack-2 と checksums を同じフォルダに集めて
    `sh install-ai-pack.sh <1で展開した Koeiro フォルダ>`
 3. ./Koeiro/Koeiro を起動
@@ -127,7 +132,7 @@ promo/public/audio/voice_demo_converted.wav  314,574 B  48 kHz mono 3.44 秒
 * [ ] 年齢表示・カテゴリ指定
 * [ ] 「動作確認済み」の範囲を実態に合わせて書く（下記の実測／未確認をそのまま使う）
 * [ ] 更新のお知らせ導線（GitHub リリースページのURL、または BOOTH での再配布方針）
-* [ ] `PUBLISHING.md` の「公開前チェックリスト」を v0.13.3 で通す（同梱物・LGPL・既定声以外
+* [ ] `PUBLISHING.md` の「公開前チェックリスト」を v0.13.4 で通す（同梱物・LGPL・既定声以外
       の声が入っていないこと）
 
 ---
@@ -136,17 +141,24 @@ promo/public/audio/voice_demo_converted.wav  314,574 B  48 kHz mono 3.44 秒
 
 **実測**
 
-* Windows: 0.13.1 → 0.13.2 の通し更新（setup.exe 検証 → /VERYSILENT 適用 → 新プロセス起動）
-* Windows: 凍結 AI ワーカーと開発環境ワーカーの変換結果がビット同一（max_abs_diff 0.0）
-* Linux: Debian bookworm のコンテナで、`install-ai-pack.sh` → インストール先の
-  `KoeiroWorker`（実行ビットあり）→ 一括変換-最速 + LavaSR で 13.756 秒の保存音声を
-  660,288 サンプルに出力（ピーク 0.95、帯域復元のフォールバックなし）
-* Linux: オフスクリーンでの `--smoke-test` 成功、バンドルが自分で `v0.13.3` と報告すること
-* Linux: 配布物3点の sha256 が GitHub の digest と一致
+* Windows: 0.13.1 → 0.13.2 の通し更新（setup.exe 検証 → /VERYSILENT 適用 → 新プロセス起動）。
+  v0.13.3 以降の更新適用は回していません
+* Windows: 凍結 AI ワーカーと開発環境ワーカーの変換結果がビット同一（max_abs_diff 0.0）。
+  v0.13.4 の凍結ワーカーで再確認済み（`voice_demo_original.wav` 3.439 秒、一括変換 + LavaSR）
+* Windows: 凍結アプリが `--smoke-test` で exit 0、`--help` が `Koeiro v0.13.4` と報告
+* Linux: Debian bookworm のコンテナで、`install-ai-pack.sh`（ハッシュ検証込み）→
+  インストール先の `KoeiroWorker`（実行ビットあり）→ 一括変換 + LavaSR で 3.439 秒の
+  保存音声を 165,072 サンプルに出力（帯域復元のフォールバックなし）
+* Linux: オフスクリーンでの `--smoke-test` 成功、バンドルが自分で `v0.13.4` と報告すること
+* Linux: 配布物3点の `sha256sum -c` が手元で通り、アプリの `--help` と合わせて確認済み
+* テスト一式: 1239 passed / 11 skipped（`-X dev`、ResourceWarning 0 件）
 
 **未確認（書かない／「未確認」と書く）**
 
 * Linux の実機デスクトップで、マイクとスピーカーを使った通話／Discord 運用
-* Linux での RTF（コンテナ内で 1.245 と 1.45 を1回ずつ見ただけで、Windows と同条件ではない）
+* Linux での RTF（コンテナ内の1回の計測だけで、Windows と同条件ではない）
+* Windows の AIパックを実際にインストールしての起動（`%LOCALAPPDATA%` の実環境を
+  書き換えるため、v0.13.4 では回していない）
 * 官能評価（音色・残響・ブレスの自然さ）— 誰が聞いても良いと思った記録はありません
 * Windows 10 での動作（開発・検証は Windows 11 の実機）
+* 配布物3点の sha256 と GitHub の digest の突き合わせ（アップロード後に確認する）
