@@ -48,6 +48,12 @@ on:
 permissions:
   contents: write
 
+env:
+  # Windows ランナーの既定コンソールは cp1252 で、日本語を print しただけで
+  # UnicodeEncodeError になる（setup_release と build_windows_setup で実測）。
+  # 標準ストリームだけ UTF-8 に固定する（open() の既定は変えない）。
+  PYTHONIOENCODING: utf-8
+
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
