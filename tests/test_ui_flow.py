@@ -51,6 +51,10 @@ def test_the_window_is_frameless_and_the_bar_is_its_title_bar(ai_window):
 def test_the_stage_banner_states_the_ai_readiness_from_the_bridge(ai_window):
     """Five readiness states, each read off the worker rather than guessed."""
     app, window, backend, bridge = ai_window
+    # The states under test come from the live bridge. Pin the machine-level startup
+    # diagnostic to the installed case: a runner without the model tree has its own
+    # state, pinned on its own below.
+    window.startup_diagnostic = {'ai_available': True, 'issues': []}
     pump(app, lambda: bridge.status == 'Ready')
     window._tick()
     assert window.ai_banner.property('state') == 'ready'
@@ -80,9 +84,19 @@ def test_the_stage_banner_states_the_ai_readiness_from_the_bridge(ai_window):
     assert not hasattr(window, 'ai_readiness')
 
 
+def test_the_stage_states_unavailable_when_the_machine_cannot_load_it(ai_window):
+    """The machine-level branch: a model tree that cannot be read says so."""
+    app, window, backend, bridge = ai_window
+    window.startup_diagnostic = {'ai_available': False, 'issues': ['MeanVC2 asset missing']}
+    window._tick()
+    assert window.ai_banner.property('state') == 'unavailable'
+    assert 'モデルを読み込めません' in window.ai_banner_note.text()
+
+
 def test_the_stage_repeats_the_ai_readiness_large(ai_window):
     """The same AI state gets one big line in the flow, not just the foot."""
     app, window, backend, bridge = ai_window
+    window.startup_diagnostic = {'ai_available': True, 'issues': []}
     assert window.ai_banner.isVisible()
     assert window.ai_banner_note.isVisible()
     font = window.ai_banner.font()

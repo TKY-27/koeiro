@@ -131,9 +131,15 @@ def test_backend_and_lavasr_reject_bad_devices():
         LavaSR(device='tpu')
 
 
-def test_backend_cuda_without_gpu_fails_cleanly(monkeypatch):
+def test_backend_cuda_without_gpu_fails_cleanly(monkeypatch, tmp_path):
+    """A folder of its own: the refusal must not need the shipped model tree.
+
+    The asset list is empty, so no real weight is hashed and a runner without
+    vc_models reaches the CUDA branch instead of dying in the asset checksum.
+    """
+    import json
     import types
-    from pathlib import Path
+    import numpy as np
     fake_torch = types.SimpleNamespace(
         cuda=types.SimpleNamespace(is_available=lambda: False),
         set_num_threads=lambda *args: None,
@@ -147,9 +153,11 @@ def test_backend_cuda_without_gpu_fails_cleanly(monkeypatch):
     monkeypatch.setitem(sys.modules, 'torchaudio.compliance', fake_torchaudio.compliance)
     monkeypatch.setitem(sys.modules, 'torchaudio.compliance.kaldi', fake_kaldi)
     from src.vc.meanvc2 import MeanVC2Backend
-    from src.vc.models import default_voice_id, profile
-    root = Path(__file__).resolve().parents[1]
-    folder = root / 'models' / profile(default_voice_id())['folder']
+    folder = tmp_path / 'voice'
+    folder.mkdir()
+    (folder / 'runtime.json').write_text(json.dumps(
+        {'backend': 'meanvc2', 'preset': '120ms', 'assets': []}), 'utf-8')
+    np.save(folder / 'fixed_embedding.npy', np.zeros(256, dtype=np.float32))
     backend = MeanVC2Backend(threads=1, device='cuda')
     with pytest.raises(ValueError, match='CUDA requested'):
         backend.load(folder)

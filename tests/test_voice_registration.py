@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -365,6 +366,7 @@ def test_worker_rejects_a_bundle_that_was_moved_or_tampered_with(tmp_path, monke
         rv.read_bundle(str(staging))
 
 
+@pytest.mark.skipif(not shutil.which('ffmpeg'), reason='ffmpeg is required for decoding')
 def test_multiple_sources_are_joined_into_one_recording(tmp_path, monkeypatch):
     import tools.register_voice as rv
     make_library(tmp_path, monkeypatch, 'user_'+'f'*32)
