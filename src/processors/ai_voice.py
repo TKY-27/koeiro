@@ -3,7 +3,7 @@ import logging
 
 import numpy as np
 from .base import AudioProcessor
-from src.vc.bridge import AIBridge
+from src.vc.bridge import AIBridge, fallback_is_silent
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class AIVoiceProcessor(AudioProcessor):
     def process(self, audio, sample_rate):
         bridge = self.bridge
         if not getattr(self, 'supported', False) or bridge.status != 'Ready' or bridge.ack_generation != bridge.generation:
-            if getattr(self,'supported',False) and bridge.parameters.mute_during_startup and (bridge.status!='Error' or bridge.parameters.delivery=='utterance'):audio.fill(0)
+            if getattr(self,'supported',False) and bridge.parameters.mute_during_startup and (bridge.status!='Error' or fallback_is_silent(bridge.parameters)):audio.fill(0)
             # Streaming falls back to the Original on a failure; the sentence route
             # keeps the microphone silent instead, because once a sentence has been
             # engaged its raw voice must never reach the listener.

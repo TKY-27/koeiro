@@ -162,3 +162,15 @@ def test_a_short_block_does_not_stop_the_next_full_block():
     final = mixed.process(full.copy(), RATE)
     assert final.shape == (FRAME, 1) and np.isfinite(final).all()
     assert rms(final) < rms(full)
+
+
+def test_a_block_larger_than_prepare_is_a_clear_error():
+    """The engine refuses frames > max_frames before the chain, so this guard speaks
+    for the next host: growing BUFFERS would otherwise resurface the same numpy
+    broadcast failure the short-block fix removed, just from the other side.
+    """
+    processor = NoiseSuppressionProcessor(0.8)
+    processor.prepare(RATE, FRAME)
+    oversized = np.zeros((FRAME * 2, 1), dtype=np.float32)
+    with pytest.raises(ValueError, match='prepared for'):
+        processor.process(oversized, RATE)

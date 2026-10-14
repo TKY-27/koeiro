@@ -52,6 +52,7 @@ class NoiseSuppressionProcessor(AudioProcessor):
         return self._strength
 
     def prepare(self, sample_rate, max_frames):
+        self._max_frames = int(max_frames)
         bins = max_frames // 2 + 1
         self._noise = np.zeros(bins, dtype=np.float32)
         self._gain = np.empty(bins, dtype=np.float32)
@@ -74,6 +75,13 @@ class NoiseSuppressionProcessor(AudioProcessor):
         # so only the bins this block actually has may be touched. Sizing these to
         # max_frames instead raised ValueError inside the audio callback.
         bins = len(magnitude)
+        if bins > len(self._noise):
+            # The engine refuses frames > max_frames before the chain reaches us; this
+            # speaks for the next host. Growing BUFFERS would otherwise resurface the
+            # same numpy broadcast failure the short-block fix removed, just mirrored.
+            raise ValueError(
+                f"Noise reduction was prepared for {self._max_frames} frames, "
+                f"received {audio.shape[0]}")
         noise = self._noise[:bins]
         if not self._seen:
             # The first block *is* the floor; suppressing against zero would pass it.

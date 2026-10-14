@@ -17,6 +17,18 @@ from .wakeup import InputWakeup
 log=logging.getLogger(__name__)
 
 
+def fallback_is_silent(parameters):
+    """True when this route mutes on failure instead of falling back to the Original.
+
+    processors/ai_voice.py and AIBridge.fallback_note() both read this one predicate,
+    so the log can never promise audio the callback does not produce: the sentence
+    route stays silent, because once a sentence has been engaged its raw voice must
+    never reach the listener.
+    """
+    return bool(parameters is not None and parameters.mute_during_startup
+                and parameters.delivery == 'utterance')
+
+
 class AIBridge:
     rpc_timeout_seconds=1.0
     load_timeout_seconds=30.0
@@ -535,7 +547,7 @@ class AIBridge:
         The callback's rule lives in processors/ai_voice.py; the log used to promise
         Original on every route, and the sentence route deliberately keeps silence.
         """
-        if self.parameters.delivery == 'utterance' and self.parameters.mute_during_startup:
+        if fallback_is_silent(self.parameters):
             return 'Fallback: 無音（発話ルートは生声を流さない）'
         return 'Fallback: Original'
 

@@ -41,7 +41,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pytest
-      - run: python -m pytest tests/test_release_tools.py -q
+      # -X dev は ResourceWarning を発生させ、pytest.ini のゲートがそれを失敗にする。
+      - run: python -X dev -m pytest tests/test_release_tools.py -q
 
   build:
     needs: selftest
