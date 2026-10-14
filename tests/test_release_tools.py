@@ -283,3 +283,73 @@ def test_asset_builders_answer_help_without_touching_assets(tmp_path):
         for path, content in before.items():
             if path.read_bytes() != content:
                 path.write_bytes(content)
+
+
+def _release_tree(tmp_path, tag="v9.9.9"):
+    """A dist tree shaped like the assembled release, at test sizes."""
+    from src.app_update import sha256_of
+    dist = tmp_path / "dist"
+    files = {
+        dist / f"koeiro-{tag}-windows.zip": b"source windows",
+        dist / f"koeiro-{tag}-linux.tar.gz": b"source linux",
+        dist / "setup" / f"koeiro-{tag}-windows-setup.exe": b"setup",
+        dist / "ai-pack" / f"koeiro-{tag}-ai-pack.exe": b"aipack",
+        dist / "ai-pack" / f"koeiro-{tag}-ai-pack-1.bin": b"bin" * 40,
+        dist / "linux" / f"koeiro-{tag}-linux-app.tar.gz": b"app",
+        dist / "linux" / f"koeiro-{tag}-linux-ai-pack-1.tar.gz": b"one",
+        dist / "linux" / f"koeiro-{tag}-linux-ai-pack-2.tar.gz": b"two",
+    }
+    for path, payload in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+    by_name = {path.name: path for path in files}
+
+    def sheet(path, names):
+        lines = [f"{sha256_of(by_name[name])}  {name}" for name in names]
+        path.write_text("\n".join(lines) + "\n", "utf-8")
+
+    sheet(dist / "setup" / f"koeiro-{tag}-windows-checksums.txt",
+          [f"koeiro-{tag}-windows-setup.exe"])
+    sheet(dist / "ai-pack" / f"koeiro-{tag}-ai-pack-checksums.txt",
+          [f"koeiro-{tag}-ai-pack.exe", f"koeiro-{tag}-ai-pack-1.bin"])
+    sheet(dist / "linux" / f"koeiro-{tag}-linux-checksums.txt",
+          [f"koeiro-{tag}-linux-app.tar.gz", f"koeiro-{tag}-linux-ai-pack-1.tar.gz",
+           f"koeiro-{tag}-linux-ai-pack-2.tar.gz"])
+    return dist
+
+
+def test_verify_release_assets_accepts_the_assembled_set(tmp_path, capsys):
+    from tools import verify_release_assets
+    dist = _release_tree(tmp_path)
+    assert verify_release_assets.main(["--tag", "v9.9.9", "--dist", str(dist)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "ok" and report["files"] == 11
+    assert "windows/frozen" in " ".join(report["updater"])
+    assert "linux/frozen" in " ".join(report["updater"])
+
+
+def test_verify_release_assets_refuses_a_part_that_no_longer_matches(tmp_path, capsys):
+    from tools import verify_release_assets
+    dist = _release_tree(tmp_path)
+    (dist / "linux" / "koeiro-v9.9.9-linux-ai-pack-1.tar.gz").write_bytes(b"tampered")
+    assert verify_release_assets.main(["--tag", "v9.9.9", "--dist", str(dist)]) == 1
+    assert "sha256 が違います" in capsys.readouterr().err
+
+
+def test_verify_release_assets_requires_the_row_the_linux_updater_reads(tmp_path, capsys):
+    from tools import verify_release_assets
+    dist = _release_tree(tmp_path)
+    sheet = dist / "linux" / "koeiro-v9.9.9-linux-checksums.txt"
+    rows = [line for line in sheet.read_text("utf-8").splitlines()
+            if "linux-app.tar.gz" not in line]
+    sheet.write_text("\n".join(rows) + "\n", "utf-8")
+    assert verify_release_assets.main(["--tag", "v9.9.9", "--dist", str(dist)]) == 1
+    assert "app tar" in capsys.readouterr().err
+
+
+def test_verify_release_assets_names_a_missing_installer(tmp_path, capsys):
+    from tools import verify_release_assets
+    dist = _release_tree(tmp_path)
+    (dist / "setup" / "koeiro-v9.9.9-windows-setup.exe").unlink()
+    assert verify_release_assets.main(["--tag", "v9.9.9", "--dist", str(dist)]) == 1
+    assert "windows-setup.exe" in capsys.readouterr().err
