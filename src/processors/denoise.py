@@ -69,13 +69,18 @@ class NoiseSuppressionProcessor(AudioProcessor):
             return audio
         spectrum = np.fft.rfft(audio[:, 0])
         magnitude = np.abs(spectrum)
-        noise = self._noise
+        # The scratch arrays were allocated for prepare()'s largest block. A host can
+        # call back with fewer frames -- the engine hands the chain `work[:frames]` --
+        # so only the bins this block actually has may be touched. Sizing these to
+        # max_frames instead raised ValueError inside the audio callback.
+        bins = len(magnitude)
+        noise = self._noise[:bins]
         if not self._seen:
             # The first block *is* the floor; suppressing against zero would pass it.
             noise[:] = magnitude
             self._seen = True
             return audio
-        gain = self._gain
+        gain = self._gain[:bins]
         # gain is first a scratch for magnitude*beta, then becomes the real gain.
         np.multiply(magnitude, FLOOR_TRACKING, out=gain)
         np.multiply(noise, 1.0 - FLOOR_TRACKING, out=noise)

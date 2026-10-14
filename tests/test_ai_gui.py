@@ -186,8 +186,12 @@ def test_recommended_settings_preserve_devices_and_block_live_model_change(ai_wi
     assert not window.ai_pitch.isEnabled()
 
 
-def _wait_guide(app, window, show, timeout=2.0):
-    """Pump events until the guide opens (or closes), or the bound expires."""
+def _wait_guide(app, window, show, timeout=10.0):
+    """Pump events until the guide opens (or closes), or the bound expires.
+
+    The guide follows a real QTimer behind the splash, so the bound has to outlast a
+    full run sharing the CPU; a guide that never opens still fails here.
+    """
     until = time.monotonic() + timeout
     while time.monotonic() < until:
         app.processEvents()

@@ -43,21 +43,6 @@ def _framed_matrix(audio, frame, hop):
     return np.lib.stride_tricks.as_strided(audio, shape=shape, strides=strides)
 
 
-def _framed_matrix(audio, frame, hop):
-    """Contiguous (count, frame) window matrix over `audio`.
-
-    Rows match the historical per-frame loop exactly (same samples in the
-    same order); only the Python loop is gone. The caller keeps every
-    downstream formula untouched, so outputs are unchanged while the
-    per-frame FFTs run as one batched call.
-    """
-    audio = np.ascontiguousarray(audio, dtype=np.float32)
-    count = 1 + (len(audio) - frame) // hop
-    shape = (count, frame)
-    strides = (audio.strides[0] * hop, audio.strides[0])
-    return np.lib.stride_tricks.as_strided(audio, shape=shape, strides=strides)
-
-
 def _fade_pair(length):
     """Equal-power out/in ramps over `length` samples."""
     angle = np.linspace(0, np.pi/2, length)

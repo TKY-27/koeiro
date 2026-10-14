@@ -310,3 +310,37 @@ def test_local_engine_refuses_to_run_on_windows(tmp_path):
     from tools import build_linux_bundles
     with pytest.raises(SetupError):
         build_linux_bundles.build_local("app", tmp_path, tmp_path / "out.tar.gz", 60)
+
+
+def test_the_linux_runtime_library_list_has_one_source():
+    """The apt list is `RUNTIME_APT`; the CI job and the README used to copy it.
+
+    The verification container had the seven package names written out a second time
+    (the file's own comment warns that one of the two then goes stale), and the
+    README's Linux source-tree install omitted the Qt libraries entirely, so a clean
+    Debian box followed the doc and PySide6 refused to start.
+    """
+    from tools import build_linux_bundles
+    root = Path(__file__).resolve().parents[1]
+    packages = set(build_linux_bundles.RUNTIME_APT)
+    workflow = (root / ".github" / "workflows" / "linux-assets.yml").read_text("utf-8")
+    assert "steps.runtime-apt.outputs.packages" in workflow
+    for package in packages:
+        assert workflow.count(package) <= 1, f"{package} copied into the workflow again"
+
+    readme = (root / "README.md").read_text("utf-8").splitlines()
+    command = []
+    continuation = chr(92)  # the shell line-continuation the README command uses
+    for line_number, line in enumerate(readme):
+        if line.strip().startswith("sudo apt install"):
+            command, cursor = [], line_number
+            while True:
+                command.append(readme[cursor].strip().rstrip(continuation))
+                if not readme[cursor].rstrip().endswith(continuation):
+                    break
+                cursor += 1
+            break
+    assert command, "the README no longer shows a Linux apt install command"
+    joined = " ".join(command)
+    missing = sorted(package for package in packages if package not in joined)
+    assert not missing, f"README Linux setup is missing {missing}"

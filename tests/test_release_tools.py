@@ -5,6 +5,7 @@ builds a throwaway git repository (skipped when git is missing), and the setup
 script is exercised through --dry-run plus its pure helpers.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -249,3 +250,36 @@ def test_version_tag_must_match_the_build_reports(tmp_path):
     build_windows_setup.check_version_tag(root, "v1.2.3")
     with pytest.raises(build_windows_setup.SetupError):
         build_windows_setup.check_version_tag(root, "v1.2.4")
+
+
+def test_asset_builders_answer_help_without_touching_assets(tmp_path):
+    """`--help` used to run the whole job: asking a brand tool for its usage wrote
+    assets/icon.ico, the PNGs and Koeiro.desktop over the tracked copies.
+    """
+    import hashlib
+    root = Path(__file__).resolve().parents[1]
+    tracked = [root / "assets" / name for name in ("icon.ico", "brand.png", "social.png")]
+    tracked.append(root / "Koeiro.desktop")
+    before = {path: path.read_bytes() for path in tracked if path.is_file()}
+
+    def digest(data):
+        return hashlib.sha256(data).hexdigest()
+
+    try:
+        # The usage text carries this repository's path, whose Japanese characters the
+        # child writes in whatever encoding it was given. Left to the locale, a cp932
+        # parent reading a UTF-8 child turns stdout into None instead of a failed assert.
+        child = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        for script in ("build_brand.py", "build_desktop.py", "write_build_root.py",
+                       "rtf_baseline.py"):
+            done = subprocess.run([sys.executable, str(root / "tools" / script), "--help"],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=180, cwd=str(tmp_path), env=child)
+            assert done.returncode == 0, (script, done.stderr[-400:])
+            assert "usage:" in done.stdout, (script, done.stdout[:200])
+        for path, content in before.items():
+            assert digest(path.read_bytes()) == digest(content), f"--help rewrote {path.name}"
+    finally:
+        for path, content in before.items():
+            if path.read_bytes() != content:
+                path.write_bytes(content)

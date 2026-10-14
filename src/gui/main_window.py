@@ -396,7 +396,10 @@ class MainWindow(QMainWindow):
         level_note.setObjectName('muted')
         level_note.setWordWrap(True)
         level_section.addWidget(level_note)
-        self.gain, self.gain_label = self._slider(level_section, "音量 (Gain)", -300, 120,
+        # The track stops where GainProcessor still answers: it accepts -20..+20 dB,
+        # and a settings file is clamped to the same, so a slider that travelled past
+        # -20 dB showed a number the engine refused and silently kept the old level.
+        self.gain, self.gain_label = self._slider(level_section, "音量 (Gain)", -200, 120,
                                                   round(self.settings.gain_db * 10))
         self.gate, self.gate_label = self._slider(level_section, "Noise Gate", -800, -100,
                                                  round(self.settings.noise_gate_db * 10))
@@ -2484,7 +2487,6 @@ class MainWindow(QMainWindow):
         """Keep the pitch explanation in step with the selected mode."""
         if hasattr(self, 'pitch_note'):
             self._update_pitch_note()
-        self._update_orb(self.controller.snapshot)
         if hasattr(self, 'output_card_text'):
             self.output_card_text.setText('現在の設定: ' + self._describe_output()
                                            if self.controller.engine.running
@@ -2541,18 +2543,28 @@ class MainWindow(QMainWindow):
             self.voice_hint.setText('声がありません。右の声パネルから声を登録してください。')
             return
         from src.vc.voice_library import metadata
+        # Both voice branches quote numbers out of the user's own profile.json, and a
+        # half-copied or hand-edited one used to raise through this slot -- Qt swallows
+        # that, so the panel silently kept the previous voice's text. Reading it here
+        # turns that into one honest line; the conversion itself never depended on it.
+        if selected.get('standard') or selected.get('user_voice'):
+            try:
+                info = metadata(self.ai_model.currentData())
+                seconds = float(info['reference_seconds'])
+                name = info['name'] if isinstance(info.get('name'), str) else selected['name']
+            except (OSError, ValueError, TypeError, KeyError, RecursionError):
+                self.voice_hint.setText('この声の詳細は profile.json から読み込めません。変換は使えます。')
+                return
         if selected.get('standard'):
-            info = metadata(self.ai_model.currentData())
             self.voice_hint.setText(
                 f"アプリ標準の声「{selected['name']}」を選択中\n"
-                f"Reference {info['reference_seconds']:.1f}秒 · 最初からこの声で使えます。"
+                f"Reference {seconds:.1f}秒 · 最初からこの声で使えます。"
                 "自分の声に変えるには「＋ 音声ファイルから声を追加」から。")
             self.voice_note.setText('この声はアプリに同梱されています。変更・削除はできません。')
         elif selected.get('user_voice'):
-            info = metadata(self.ai_model.currentData())
             self.voice_hint.setText(
-                f"登録した声「{info['name']}」を選択中\n"
-                f"Reference {info['reference_seconds']:.1f}秒 · 似具合は録音内容で変わります。")
+                f"登録した声「{name}」を選択中\n"
+                f"Reference {seconds:.1f}秒 · 似具合は録音内容で変わります。")
             self.voice_note.setText('登録はローカルで完結。学習不要・元の音声ファイルはそのまま。')
         else:
             self.voice_hint.setText(selected['name']+'\n今までの声はそのまま選べます。')

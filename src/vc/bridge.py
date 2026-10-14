@@ -186,6 +186,7 @@ class AIBridge:
             self.thread.join(timeout=3)
         if self.alive:
             self.status, self.error = 'Error', 'AI worker did not stop'
+            self.worker_state = 'Error'
             raise RuntimeError(self.error)
         if self.watchdog is not None and self.watchdog is not threading.current_thread():
             self.watchdog.join(timeout=.2)
@@ -316,7 +317,7 @@ class AIBridge:
             if not self._stop.is_set():
                 self.status, self.error = 'Error', str(error)
                 self.worker_state = 'Error'
-                log.exception('AI Voice unavailable; Fallback: Original')
+                log.exception('AI Voice unavailable; %s', self.fallback_note())
         finally:
             self._stop.set()
             self._idle.set()
@@ -521,12 +522,22 @@ class AIBridge:
                 self.worker_state = 'Error'
                 self.error = ('AI process crashed' if crashed else 'AI stalled' if stalled else
                               'AI inference timed out' if inference_expired else 'AI model load timed out')
-                log.error('%s; Fallback: Original',self.error)
+                log.error('%s; %s', self.error, self.fallback_note())
                 self._stop.set()
                 client=self.client
                 if client is not None:
                     client.interrupt()
                 return
+
+    def fallback_note(self):
+        """What the listener actually receives while this route produces nothing.
+
+        The callback's rule lives in processors/ai_voice.py; the log used to promise
+        Original on every route, and the sentence route deliberately keeps silence.
+        """
+        if self.parameters.delivery == 'utterance' and self.parameters.mute_during_startup:
+            return 'Fallback: 無音（発話ルートは生声を流さない）'
+        return 'Fallback: Original'
 
     def snapshot(self):
         count = self.incident_count

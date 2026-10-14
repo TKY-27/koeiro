@@ -42,10 +42,13 @@ jobs:
       # ビルドも起動確認も、Docker 経路と同じ一覧（tools/build_linux_bundles.py の
       # RUNTIME_APT）を単一の出所から入れます。リストを2箇所に写すと必ず片方が古くなる
       - name: システムライブラリ
+        id: runtime-apt
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq $(python -c \
+          packages=$(python -c \
             "import sys; sys.path.insert(0, 'tools'); from build_linux_bundles import RUNTIME_APT; print(' '.join(RUNTIME_APT))")
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq $packages
       - name: アプリ本体バンドルを作る
         run: >-
           python tools/build_linux_bundles.py --tag "${{ inputs.tag }}"
@@ -58,8 +61,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/work" -w /work python:3.12-bookworm bash -ec '
             apt-get update -qq >/dev/null
-            apt-get install -y -qq libportaudio2 libgl1 libegl1 libglib2.0-0 \
-              libxkbcommon0 libdbus-1-3 fontconfig >/dev/null
+            apt-get install -y -qq ${{ steps.runtime-apt.outputs.packages }} >/dev/null
             mkdir -p /tmp/app
             tar -xzf /work/dist/linux/koeiro-${{ inputs.tag }}-linux-app.tar.gz -C /tmp/app
             QT_QPA_PLATFORM=offscreen /tmp/app/Koeiro/Koeiro --smoke-test'

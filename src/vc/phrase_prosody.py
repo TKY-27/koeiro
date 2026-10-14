@@ -480,8 +480,9 @@ def retrospective_pitch(source48, voice48, analysis=None, transfer=0.20, max_shi
     on the whole utterance at 48 kHz with a wider ±1.0 st cap: it picks up the
     phrase-level residue the streaming repair left behind (late-bypassed
     windows, ending contours). Only confidently periodic vowel frames are
-    touched, in 40 ms grains with sin^2 crossfades; breaths, onsets, unvoiced
-    frames and octave jumps bypass exactly. Same length in, same length out.
+    touched, in 40 ms grains with sin^2 crossfades; unvoiced frames, breaths
+    and octave jumps bypass, and the first 300 ms of a phrase takes half the
+    correction rather than none. Same length in, same length out.
     """
     source48 = np.asarray(source48, dtype=np.float32)
     voice48 = np.asarray(voice48, dtype=np.float32)
@@ -519,8 +520,6 @@ def retrospective_pitch(source48, voice48, analysis=None, transfer=0.20, max_shi
     # Onset guard: halve corrections in the first 300 ms.
     onset_frames = int(300/40)
     smooth[:onset_frames] *= 0.5
-    floor = float(np.percentile(a[:, 2], 5))
-    breath = ((~voiced) & (a[:, 1] < 0.4) & (a[:, 2] > floor+3.0) & (b[:, 2] > floor+3.0))
     out = voice48.copy()
     edited = 0
     step = 1920  # 40 ms grains at 48 kHz, mirroring the live 40 ms path.

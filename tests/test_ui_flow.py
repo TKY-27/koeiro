@@ -792,3 +792,20 @@ def test_the_preroll_caption_reads_as_a_setting_and_not_a_measurement(ai_window,
     window._update_meanvc_controls()
     assert window.ai_wait_label.text() == window._preroll_text()
     assert window.ai_wait_label.text().startswith('77 ms')
+
+
+def test_switching_the_conversion_mode_runs_the_slot_to_the_end(ai_window):
+    """The mode slot still repainted the orb the shell redesign removed.
+
+    Qt swallows a slot exception, so the suite never saw it: every switch raised at
+    that call and nothing after it ran. The handler is called directly because the
+    signal path is exactly what hides the raise.
+    """
+    app, window, backend, bridge = ai_window
+    expected = {'female_dsp': 'Female DSP のピッチです',
+                'ai_voice': 'AI Voice ではピッチは',
+                'original': 'ピッチ変更は Female DSP'}
+    for data, note in expected.items():
+        window.mode.setCurrentIndex(window.mode.findData(data))
+        window._mode_changed()
+        assert window.pitch_note.text().startswith(note)

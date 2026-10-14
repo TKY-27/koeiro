@@ -145,6 +145,18 @@ BOOTH の上限は **1ファイル 1.2GB・1商品あたり合計 10GB**（2026-
 | `Koeiro_<tag>_Windows.zip` | setup.exe・`-windows-checksums.txt`・ai-pack.exe・ai-pack-1.bin・ai-pack-checksums・入手案内 | 748.2 MB |
 | `Koeiro_<tag>_Linux.zip` | app tar・ai-pack 2分割・`-linux-checksums.txt`・入手案内 | 910.7 MB |
 
+```powershell
+# dist/setup・dist/ai-pack・dist/linux が揃った状態で（入手案内.txt は実測範囲を書いた自前のもの）
+.venv\Scripts\python tools\build_booth_zip.py --tag v1.0.0 `
+  --guide-windows notes\guide-v1.0.0-windows.txt --guide-linux notes\guide-v1.0.0-linux.txt
+# 出来た ZIP の点検だけ（中身の名校験・フラット・stored・破損検査）
+.venv\Scripts\python tools\build_booth_zip.py --tag v1.0.0 --check
+```
+
+- このツールが検査するもの：同梱の checksums と各メンバーの sha256、1ファイル 1.2GB・
+  1商品 10GB の上限、ルートのフラットさ、メンバーの重複。v0.13.3 の2枚は
+  `--check` を通ります（この手順で作り直せる形で一致することを 2026-10-14 に確認）
+
 - どちらも上限の内側（最大の中身は ai-pack-1.bin 696.7 MB）。2ファイルを1商品にしても、
   Windows用と Linux用で商品を分けても容量は足ります
 - ZIP は **無圧縮（stored）**。中身がすでに gzip / Inno で圧縮済みなので、deflate は

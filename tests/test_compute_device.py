@@ -89,24 +89,37 @@ def test_client_hides_gpus_only_for_forced_cpu(monkeypatch, tmp_path):
         def poll(self):
             return None
 
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
     monkeypatch.setattr(subprocess, 'Popen', FakeProcess)
     monkeypatch.setattr('src.vc.client.worker_python',
                         lambda root, model=None: (tmp_path / 'python', {'PATH': 'x'}))
     monkeypatch.setattr('src.vc.client.asset_root', lambda: tmp_path)
     # The worker's log goes to the writable data directory, never the bundle.
     monkeypatch.setattr('src.vc.client.data_dir', lambda: tmp_path / 'userdata')
-    client = ServiceClient(AIParameters(device='cpu'))
-    client.log_file = None
-    client.start()
-    command = captured['args'][0]
-    assert '--device' in command and command[command.index('--device') + 1] == 'cpu'
-    assert captured['kwargs']['env'].get('CUDA_VISIBLE_DEVICES') == ''
-    client2 = ServiceClient(AIParameters(device='auto'))
-    client2.log_file = None
-    client2.start()
-    command2 = captured['args'][0]
-    assert command2[command2.index('--device') + 1] == 'auto'
-    assert 'CUDA_VISIBLE_DEVICES' not in captured['kwargs']['env']
+    # start() opens ai-worker.log, so every client here has to be closed: an open
+    # handle outliving the test shows up as a ResourceWarning in `python -X dev`.
+    clients = []
+    try:
+        client = ServiceClient(AIParameters(device='cpu'))
+        client.start()
+        clients.append(client)
+        command = captured['args'][0]
+        assert '--device' in command and command[command.index('--device') + 1] == 'cpu'
+        assert captured['kwargs']['env'].get('CUDA_VISIBLE_DEVICES') == ''
+        client2 = ServiceClient(AIParameters(device='auto'))
+        client2.start()
+        clients.append(client2)
+        command2 = captured['args'][0]
+        assert command2[command2.index('--device') + 1] == 'auto'
+        assert 'CUDA_VISIBLE_DEVICES' not in captured['kwargs']['env']
+    finally:
+        for entry in clients:
+            entry.close()
 
 
 def test_backend_and_lavasr_reject_bad_devices():

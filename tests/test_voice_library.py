@@ -35,6 +35,38 @@ def test_incomplete_and_unsafe_library_entries_are_not_live_profiles(tmp_path):
         folder_for('../../meanvc2_ref20', tmp_path)
 
 
+def test_a_profile_nested_past_the_parser_limit_is_skipped(tmp_path):
+    """discover() runs while src.vc.models is imported. A voice folder holding a
+    profile.json of nothing but "[" repeated 30000 times is under the 64 KB size cap
+    but past the interpreter's recursion limit, and the RecursionError used to escape
+    the import -- the whole app refused to start instead of losing one voice.
+    """
+    good = voice_files(tmp_path, identifier='user_' + 'b' * 32)
+    broken = voice_files(tmp_path, identifier='user_' + 'c' * 32)
+    (broken / 'profile.json').write_text('[' * 30000 + ']' * 30000, 'utf-8')
+    assert (broken / 'profile.json').stat().st_size < 65536  # the size guard lets it in
+    assert set(discover(tmp_path)) == {good.name}
+
+
+def test_the_voice_panel_says_what_it_could_not_read(ai_window, monkeypatch):
+    """The panel quoted profile.json straight from the slot. An unreadable file raised,
+    Qt swallowed it, and the screen kept the previous voice's numbers.
+    """
+    app, window, backend, bridge = ai_window
+
+    def unreadable(*args, **kwargs):
+        raise RecursionError('profile.json nested past the parser limit')
+
+    monkeypatch.setattr('src.vc.voice_library.metadata', unreadable)
+    window._update_voice_info()
+    assert 'profile.json' in window.voice_hint.text()
+
+    monkeypatch.setattr('src.vc.voice_library.metadata',
+                        lambda *args, **kwargs: {'name': 'テストの声', 'reference_seconds': 7.5})
+    window._update_voice_info()
+    assert '7.5' in window.voice_hint.text()
+
+
 def test_standard_voice_is_labelled_as_the_app_voice(tmp_path):
     """The shipped voice is never presented as one of the user's own registrations."""
     from src.vc import models

@@ -102,7 +102,11 @@ def discover(root=ROOT):
                 startup_chunks=6, queue_chunks=10, mute_during_startup=True,
                 optimized_condition='user voice: 720ms grouped VC + 36-frame Vocos',
                 voice=0, pitch=0., formant=0.)
-        except (OSError, ValueError, TypeError, AttributeError):
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError):
+            # RecursionError because the size cap above does not bound nesting:
+            # 60 KB of "[" parses far past the interpreter's depth limit, and this
+            # runs while src.vc.models is imported -- an escaping error here would
+            # stop the whole app from starting, not just hide one voice.
             continue
     return found
 

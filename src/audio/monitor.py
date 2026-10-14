@@ -86,8 +86,11 @@ class MonitorTap:
         first = min(take, self.capacity - tail)
         destination[:first] = self.buffer[tail:tail + first]
         if first < take:
+            # Bound the wrapped part by what is taken, not by the whole destination:
+            # a short read (underrun) that also wraps leaves destination[take:] for the
+            # caller to fill with silence, and slicing it here raises ValueError.
             rest = take - first
-            destination[first:] = self.buffer[:rest]
+            destination[first:take] = self.buffer[:rest]
         self.available -= take
         return take
 

@@ -1,7 +1,11 @@
 from src.vc.models import is_meanvc2
+import logging
+
 import numpy as np
 from .base import AudioProcessor
 from src.vc.bridge import AIBridge
+
+log = logging.getLogger(__name__)
 
 
 class AIVoiceProcessor(AudioProcessor):
@@ -44,13 +48,21 @@ class AIVoiceProcessor(AudioProcessor):
         self._has_played=False
 
     def stop(self):
-        self.bridge.stop()
+        try:
+            self.bridge.stop()
+        except Exception:
+            # A worker that will not join is already reported by the bridge status,
+            # which the AI line shows. Raising here aborted the rest of the teardown.
+            log.exception('AI worker stop incomplete')
 
     def process(self, audio, sample_rate):
         bridge = self.bridge
         if not getattr(self, 'supported', False) or bridge.status != 'Ready' or bridge.ack_generation != bridge.generation:
             if getattr(self,'supported',False) and bridge.parameters.mute_during_startup and (bridge.status!='Error' or bridge.parameters.delivery=='utterance'):audio.fill(0)
-            return audio  # Original while loading/error/reset; engine stays alive.
+            # Streaming falls back to the Original on a failure; the sentence route
+            # keeps the microphone silent instead, because once a sentence has been
+            # engaged its raw voice must never reach the listener.
+            return audio
         if self._epoch != bridge.generation:
             bridge.output.discard()  # callback owns output consumer counter
             self._reset_local()

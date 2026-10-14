@@ -58,7 +58,9 @@ Pythonのインストールや面倒なコマンド操作なしですぐに使�
 1. [Releases](https://github.com/heynegix/koeiro/releases) から `koeiro-vX.Y.Z-linux.tar.gz` をダウンロードして展開。
 2. ターミナルで依存パッケージの導入と初回セットアップを実行：
    ```bash
-   sudo apt install -y libportaudio2 portaudio19-dev ffmpeg
+   # PySide6 の実行ライブラリ（libgl1 等）も一緒に入れます
+   sudo apt install -y libportaudio2 portaudio19-dev ffmpeg \
+     libgl1 libegl1 libglib2.0-0 libxkbcommon0 libdbus-1-3 fontconfig
    python3.12 tools/setup_release.py
    ```
 3. セットアップ完了後、アプリを起動：
@@ -109,7 +111,7 @@ Pythonのインストールや面倒なコマンド操作なしですぐに使�
 | **Python** | 3.12 系 |
 | **必要容量** | 空き容量 約8GB 以上（モデル群を含む） |
 | **外部ツール** | **FFmpeg**（音声入出力用）、**git** |
-| **Linux 追加依存** | `libportaudio2`, `portaudio19-dev` |
+| **Linux 追加依存** | `libportaudio2`, `portaudio19-dev` ＋ PySide6 の実行ライブラリ（`libgl1` など。下の Linux 手順の `apt install` をそのまま使ってください） |
 | **仮想オーディオ** | 変換音声を他アプリへ渡すための仮想デバイス（任意）<br>・Windows: [VB-CABLE](https://vb-audio.com/Cable/) 等<br>・Linux: `snd-aloop`（ALSA Loopback）等 |
 
 ---

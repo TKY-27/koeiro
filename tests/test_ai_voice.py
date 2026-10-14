@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -492,3 +493,88 @@ def test_entering_dsp_clears_suspended_analysis_window_once(monkeypatch):
         router.process(np.zeros((256,1),dtype=np.float32),48000)
         assert len(resets)==2
     finally:router.stop()
+
+
+def test_a_worker_that_will_not_join_still_lets_the_route_stop():
+    """Stop after an inference timeout raised out of this processor: chain.stop()
+    aborted there, so the rest of the teardown never ran and the controller showed
+    the worker text as an app-level audio error. The bridge already carries the
+    failure in its own status, which is where the reader sees it.
+    """
+    class WedgedBridge:
+        def __init__(self):
+            self.status = 'Error'
+            self.error = 'AI worker did not stop'
+
+        def stop(self):
+            raise RuntimeError(self.error)
+
+    processor = AIVoiceProcessor(bridge=WedgedBridge())
+    processor.stop()
+    assert processor.bridge.status == 'Error'
+    assert processor.bridge.error == 'AI worker did not stop'
+
+
+def test_a_worker_that_never_wakes_is_left_saying_error():
+    """Stop gave up on an inference call that ignored the interrupt. The bridge
+    reported status Error but kept worker_state 'Stopping', so the diagnostics line
+    went on promising a stop that had already been abandoned.
+    """
+    class WedgedClient:
+        def __init__(self, parameters=None):
+            self.parameters = parameters
+            self.parked = threading.Event()
+            self.release = threading.Event()
+            self.announced = False
+
+        def start(self): pass
+
+        def read(self):
+            if not self.announced:
+                self.announced = True
+                return {'status': 'Ready'}, np.empty(0, dtype=np.float32)
+            self.release.wait(10)
+            raise EOFError('released')
+
+        def request(self, header, audio=None):
+            if header.get('op') == 'reset':
+                return {'status': 'Ready'}, audio
+            self.parked.set()
+            self.release.wait(10)
+            raise EOFError('released')
+
+        def interrupt(self): pass
+        def close(self): pass
+
+    bridge = AIBridge(client_factory=WedgedClient)
+    bridge.load()
+    wait(lambda: bridge.status == 'Ready')
+    bridge.prepare()
+    bridge.set_active(True)
+    wait(lambda: bridge.ack_generation == bridge.generation)
+    assert bridge.input.write(np.ones(bridge.chunk_frames, dtype=np.float32))
+    bridge.input_ready.signal()
+    wait(lambda: bridge.client.parked.is_set(), seconds=6)
+    with pytest.raises(RuntimeError):
+        bridge.stop()
+    assert bridge.status == 'Error' and bridge.worker_state == 'Error'
+    bridge.client.release.set()
+    wait(lambda: not bridge.alive, seconds=10)
+
+
+
+def test_the_fallback_the_log_names_is_the_one_the_callback_gives():
+    """A log line that says  Original  while the callback mutes is how the next
+    reader chases the wrong bug: the note and the audio must agree on every route.
+    """
+    for delivery, enhancer in (('streaming', 'none'), ('utterance', 'lavasr')):
+        bridge = AIBridge(AIParameters(delivery=delivery, enhancer=enhancer), FakeClient)
+        processor = AIVoiceProcessor(bridge=bridge)
+        processor.prepare(48000, 256)
+        bridge.status = 'Error'
+        bridge.ack_generation = -1
+        block = np.full((256, 1), 0.4, dtype=np.float32)
+        out = processor.process(block, 48000)
+        silenced = float(np.abs(out).max()) == 0.0
+        promised_original = 'Original' in bridge.fallback_note()
+        assert silenced is not promised_original, (delivery, bridge.fallback_note())
