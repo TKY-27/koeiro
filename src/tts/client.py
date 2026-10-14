@@ -54,6 +54,8 @@ def _interpreter(launcher_path):
     ``pyvenv.cfg``; the ASR worker resolves the same way, and using the base binary
     directly keeps a moved or renamed venv folder working.
     """
+    if os.name != 'nt':
+        return launcher_path
     home = None
     try:
         config = (launcher_path.parent.parent / 'pyvenv.cfg').read_text(encoding='utf-8')
