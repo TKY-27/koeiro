@@ -65,6 +65,15 @@ MODEL_FILES = [
 VERIFY_GUI = ["PySide6", "sounddevice", "numpy", "psutil"]
 VERIFY_WORKER = ["torch", "torchaudio", "scipy", "soundfile", "s3prl", "librosa"]
 
+# Voice-registration only. The AI pack does not bundle them (PUBLISHING), and the
+# ECAPA finetune lives on Google Drive, whose anonymous download answers or
+# refuses depending on the source address; the pack jobs skip them so a release
+# never depends on Drive's mood.
+REGISTRATION_ONLY = (
+    "vc_models/meanvc2/repo/preprocess/ckpts/wavlm_large.pt",
+    "vc_models/meanvc2/repo/preprocess/ckpts/wavlm_large_finetune.pth",
+)
+
 
 class SetupError(Exception):
     pass
@@ -211,7 +220,7 @@ def install_filtered_lock(worker, root, dry_run):
         Path(temporary).unlink(missing_ok=True)
 
 
-def fetch_models(root, dry_run):
+def fetch_models(root, dry_run, with_registration=True):
     repo = Path(root) / "vc_models" / "meanvc2" / "repo"
     if not repo.is_dir():
         if shutil.which("git") is None:
@@ -223,12 +232,16 @@ def fetch_models(root, dry_run):
     # The gate files are optional for the app (the passthrough disables itself
     # without them), so a fetch failure warns instead of failing the setup; the
     # frozen-GUI path keeps them required in fetch_nonvoice_models.
-    required = [entry for entry in MODEL_FILES if not entry[0].startswith("models/nonvoice/")]
+    required = [entry for entry in MODEL_FILES
+                if not entry[0].startswith("models/nonvoice/")
+                and (with_registration or entry[0] not in REGISTRATION_ONLY)]
     optional = [entry for entry in MODEL_FILES if entry[0].startswith("models/nonvoice/")]
     missing = fetch_entries(root, dry_run, required)
     for relative in fetch_entries(root, dry_run, optional):
         print(f"  非音声ゲートのモデルを取得できませんでした（環境音パススルーは無効のまま）: {relative}")
-    if not dry_run:
+    if not with_registration and not dry_run:
+        print("  登録専用のモデル（WavLM/ECAPA）はスキップしました（AIパックには同梱しません）")
+    if with_registration and not dry_run:
         # ECAPA finetune lives on Google Drive. The plain `uc?export=download` link
         # answers a confirm page for large files, so it has to go through the
         # usercontent endpoint with confirm=t; a failed fetch still falls back to
@@ -285,6 +298,8 @@ def main(argv=None):
     parser.add_argument("--recreate", action="store_true", help="venv を作り直す")
     parser.add_argument("--nonvoice-models", action="store_true",
                         help="非音声ゲートのモデル3点だけ取得（凍結ビルド用。venv は作らない）")
+    parser.add_argument("--no-registration-models", action="store_true",
+                        help="登録専用のモデル（WavLM/ECAPA）を取得しない（AIパック用。同梱しない）")
     args = parser.parse_args(argv)
     root = Path(args.root)
     dry_run = args.dry_run
@@ -320,7 +335,7 @@ def main(argv=None):
                 run([str(gui), "tools/install_lavasr.py"], root)
         if not args.no_models:
             print("== MeanVC2 モデル取得")
-            fetch_models(root, dry_run)
+            fetch_models(root, dry_run, with_registration=not args.no_registration_models)
         if not dry_run:
             print("== 動作確認")
             verify_interpreters(root)

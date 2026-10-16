@@ -126,6 +126,20 @@ def test_setup_dry_run_executes_nothing(tmp_path, capsys):
     assert not (tmp_path / ".venv").exists()
 
 
+def test_pack_jobs_skip_the_registration_only_weights(tmp_path, capsys):
+    """The AI pack does not bundle WavLM/ECAPA, and the ECAPA download lives on
+    Google Drive, whose anonymous fetch can be refused per source address; the
+    pack path must not depend on it."""
+    assert setup_release.main(["--root", str(tmp_path), "--dry-run",
+                               "--no-lavasr", "--no-registration-models"]) == 0
+    out = capsys.readouterr().out
+    assert "wavlm_large.pt" not in out
+    assert "fastu2pp_160ms" in out
+    assert setup_release.main(["--root", str(tmp_path), "--dry-run", "--no-lavasr"]) == 0
+    out = capsys.readouterr().out
+    assert "wavlm_large.pt" in out
+
+
 def test_setup_requires_python_312_for_real_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "version_info", (3, 11, 0))
     assert setup_release.main(["--root", str(tmp_path), "--no-models", "--no-lavasr"]) == 1
