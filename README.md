@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>登録した声へリアルタイムに変換する次世代ローカルAIボイスチェンジャー</strong><br>
-  Windows 10/11 & Linux 対応 ｜ MeanVC2 + LavaSR 帯域復元 ｜ Discord RPC 連携 ｜ 低スペック・CPU環境対応
+  Windows 10/11 & Linux 対応 ｜ MeanVC2 + LavaSR 帯域復元 ｜ 環境音はそのまま通す ｜ Discord RPC 連携 ｜ 低スペック・CPU環境対応
 </p>
 
 <p align="center">
@@ -39,70 +39,85 @@ Pythonのインストールやコマンド操作なしですぐに使いたい�
 
 👉 **[BOOTH 配布ページはこちら（negix.booth.pm/items/8981333）](https://negix.booth.pm/items/8981333)**
 
-- **Windows**: ダウンロードした `setup.exe` を実行し、画面の指示に従うだけで導入完了（標準では `%LOCALAPPDATA%\Programs\Koeiro` にインストールされます）。
-- **Linux**: 配布アーカイブを展開後、同梱のスクリプトを実行して起動します。
+- **Windows**: ダウンロードした `setup.exe` を実行してアプリを導入し、続けて AI パック（`ai-pack.exe`）をインストールすると AI ボイスが使えます。標準のインストール先は `%LOCALAPPDATA%\Programs\Koeiro` です。
+- **Linux**: 配布アーカイブを展開後、同梱の `install-ai-pack.sh` を実行して起動します。
 - 初めてAIボイスチェンジャーを触る方や、手軽に配信・通話で使いたい方に最適です。
 
 ---
 
-### 📦 GitHub Releases 版（手動セットアップ）
+### 📦 GitHub Releases 版（実行ファイル / 手動セットアップ）
+
+[Releases](https://github.com/heynegix/koeiro/releases) には、Python 不要の**実行ファイル版**と、Python 3.12 で動かす**ソースツリー版**が添付されています。
+
+- **実行ファイル版**: Windows は `koeiro-vX.Y.Z-windows-setup.exe` を入れてから AI パック（`-ai-pack.exe` と `-1.bin`）を入れます。Linux は `-linux-app.tar.gz` を展開し、`install-ai-pack.sh` で AI パックを入れます。どちらも `-checksums.txt` で破損を確認できます。
+- **ソースツリー版（手動セットアップ）**: `koeiro-vX.Y.Z-windows.zip` / `-linux.tar.gz` を展開し、以下の手順で初回セットアップします。
 
 #### Windows の場合
 1. [Releases](https://github.com/heynegix/koeiro/releases) から `koeiro-vX.Y.Z-windows.zip` をダウンロードし、任意のフォルダ（※全角やスペースを含まない英数字パス推奨）に展開。
 2. PowerShell を開き、展開先ディレクトリで初回セットアップを実行：
    ```powershell
    py -3.12 tools/setup_release.py
+   ```
+3. セットアップ完了後、アプリを起動：
+   ```powershell
+   .\.venv\Scripts\python app.py
+   ```
 
-3.  セットアップ完了後、アプリを起動：
-    .\.venv\Scripts\python app.py
+#### Linux の場合
+1. [Releases](https://github.com/heynegix/koeiro/releases) から `koeiro-vX.Y.Z-linux.tar.gz` をダウンロードして展開。
+2. ターミナルで依存パッケージの導入と初回セットアップを実行：
+   ```bash
+   # PySide6 の実行ライブラリ（libgl1 等）も含めてインストール
+   sudo apt install -y libportaudio2 portaudio19-dev ffmpeg \
+       libgl1 libegl1 libglib2.0-0 libxkbcommon0 libdbus-1-3 fontconfig
+   python3.12 tools/setup_release.py
+   ```
+3. セットアップ完了後、アプリを起動：
+   ```bash
+   .venv/bin/python app.py
+   ```
 
-Linux の場合
+> [!TIP]
+> アプリ起動後は「調整」引き出しの **「① 配線」** で **入力デバイス（マイク）** と **出力デバイス（VB-CABLE やヘッドホン等）** を指定してください。Discord や OBS 側では、Koeiro の出力先と同じ仮想オーディオデバイスを入力として選択します。
 
-1.  Releases から koeiro-vX.Y.Z-linux.tar.gz をダウンロードして展開。
-2.  ターミナルで依存パッケージの導入と初回セットアップを実行：
-    # PySide6 の実行ライブラリ（libgl1 等）も含めてインストール
-    sudo apt install -y libportaudio2 portaudio19-dev ffmpeg \
-        libgl1 libegl1 libglib2.0-0 libxkbcommon0 libdbus-1-3 fontconfig
-    python3.12 tools/setup_release.py
-3.  セットアップ完了後、アプリを起動：
-    .venv/bin/python app.py
+---
 
-[!TIP] アプリ起動後は「調整」引き出しの 「① 配線」 で 入力デバイス（マイク） と 出力デバイス（VB-CABLE やヘッドホン等）
-を指定してください。Discord や OBS 側では、Koeiro の出力先と同じ仮想オーディオデバイスを入力として選択します。
+## ✨ 主な機能
 
-✨ 主な機能
+* **用途に合わせた変換モード**
+  * **逐次変換（Streaming）**: 発話しながらリアルタイム・低遅延に変換。通話やゲームプレイに最適。
+  * **一括変換（LavaSR 高音質）**: 無音区間（約0.8秒）で自動分割し、文全体を一括変換後に LavaSR で高域を復元。極めて自然で明瞭な音質を実現。
+  * **一括変換 - 最速**: 判定待ち時間を約0.6秒まで短縮し、レスポンスを最優先したバッチ変換。
+  * **一括変換 - 高品質**: 上流 CLI と同じ全体補間・ノイズで条件付けし、ソルバーのステップを増やした品質優先ルート（変換に時間がかかります）。
+  * **Original / Female DSP**: AIを介さない素通し（スルー）モード、および軽量DSPによるピッチ・フォルマント加工。
+* **環境音はそのまま通す（拍手・キーボード・物音）**
+  * 変換モデルを通すと別の音に化けてしまう一過性の環境音を、変換せずそのままの音でリスナーへ届けます。逐次変換・一括変換の両方で働き、既定で ON（「調整」の「環境音をそのまま通す」で切り替えできます）。
+  * 咳・鼻すすり・くしゃみなど声まわりの音は環境音とみなさず、これまでどおり変換します。
+* **声の登録 & 切り替え**
+  * 標準で参照ボイスを同梱。目的の声の音声クリップ（wav/mp3等）を追加することで、お好みのキャラクターボイスへの変換が可能（※自作ボイスモデルの追加生成には開発環境が必要です）。
+* **Discord Rich Presence（RPC）連携**
+  * Discord のステータスに「Koeiro で変換中」「使用中のボイス名」をリアルタイム表示。
+* **CPU 実測最適化 & GPU（CUDA）自動切替**
+  * GPU 非搭載のミニPC（Intel N100 / N150 等）でも動く CPU 経路を既定に設計。
+  * NVIDIA GPU が検出された場合は、実測済みの MeanVC2 で CUDA を自動選択（「CPU」で固定も可能）。GPU 経路は Kaggle の Tesla T4 で CPU と -76 dB まで一致、2.0〜2.7 倍速を確認済みです。TF32 を制御して推論の再現性を確保。
+* **洗練されたUI設計（ステージ1枚＋引き出し）**
+  * メイン画面は入力レベル・遅延・ステータス表示に集中。詳細設定は「調整」「実験」の引き出しに収納。
+  * 初回起動時のスポットライトガイドや、GitHub Releases と連携したアプリ内ワンクリック自動アップデートに対応。
+* **話し方の演出・オーディオ処理**
+  * **感情・抑揚プリセット**: Calm / Gentle / Energetic / Sad / Anime Light / Anime Expressive / Feminine 等を搭載。
+  * **入力の整え（音量の自動均一化）**: 小声をAIが認識しやすい音量へ自動リフト（無音区間は増幅しません）。
+  * **出力の仕上げ & ノイズ除去**: つなぎ目のアーティファクトや耳に刺さる息音を穏やかに抑制。
+  * **AI出力フォルマント**: ピッチを維持したまま声の共振を高域へ寄せ、明るい声色に補正。
+* **配信・通話を加速するショートカット**
+  * **シーン機能**: マイク、ボイス、配線、エフェクトをプロファイルとして保存・瞬時呼出。
+  * **ホットキー**: `Ctrl+1/2/3` でモード変更、`Ctrl+D` で Original ↔ 直前変換をトグル。
+  * **音声コマンド（β）**: ウェイクワード「コエイロ」＋「止めて」「次の声」などのローカル音声操作。
+* **拡張パック（DLC）& 実験機能**
+  * レイテンシ・ガバナ、囁き検出モード、LAN内GPUを活用する分散推論、話者自動振り分け、Kokoro-82M による音声合成（TTS、モデルは `python tools/install_tts.py` で取得）などを搭載。
 
-  - 用途に合わせた変換モード
-      - 逐次変換（Streaming）: 発話しながらリアルタイム・低遅延に変換。通話やゲームプレイに最適。
-      - 一括変換（LavaSR 高音質）: 無音区間（約0.8秒）で自動分割し、文全体を一括変換後に LavaSR
-        で高域を復元。極めて自然で明瞭な音質を実現。
-      - 一括変換 - 最速: 判定待ち時間を約0.6秒まで短縮し、レスポンスを最優先したバッチ変換。
-      - Original / Female DSP: AIを介さない素通し（スルー）モード、および軽量DSPによるピッチ・フォルマント加工。
-  - 声の登録 & 切り替え
-      - 標準で参照ボイスを同梱。目的の声の音声クリップ（wav/mp3等）を追加することで、お好みのキャラクターボイスへの変換が可能（※自作ボイスモデルの追加生成には開発環境が必要です）。
-  - Discord Rich Presence（RPC）連携
-      - Discord のステータスに「Koeiro で変換中」「使用中のボイス名」をリアルタイム表示。
-  - CPU 実測最適化 & GPU（CUDA）自動切替
-      - GPU 非搭載のミニPC（Intel N100 / N150 等）でも動く CPU 経路を既定に設計。
-      - NVIDIA GPU が検出された場合は CUDA を自動選択（CPU固定も可能）。TF32 を制御して推論の再現性を確保。
-  - 洗練されたUI設計（ステージ1枚＋引き出し）
-      - メイン画面は入力レベル・遅延・ステータス表示に集中。詳細設定は「調整」「実験」の引き出しに収納。
-      - 初回起動時のスポットライトガイドや、GitHub Releases と連携したアプリ内ワンクリック自動アップデートに対応。
-  - 話し方の演出・オーディオ処理
-      - 感情・抑揚プリセット: Calm / Gentle / Energetic / Sad / Anime Light / Anime
-        Expressive / Feminine 等を搭載。
-      - 入力の整え（音量の自動均一化）: 小声をAIが認識しやすい音量へ自動リフト（無音区間は増幅しません）。
-      - 出力の仕上げ & ノイズ除去: つなぎ目のアーティファクトや耳に刺さる息音を穏やかに抑制。
-      - AI出力フォルマント: ピッチを維持したまま声の共振を高域へ寄せ、明るい声色に補正。
-  - 配信・通話を加速するショートカット
-      - シーン機能: マイク、ボイス、配線、エフェクトをプロファイルとして保存・瞬時呼出。
-      - ホットキー: Ctrl+1/2/3 でモード変更、Ctrl+D で Original ↔ 直前変換をトグル。
-      - 音声コマンド（β）: ウェイクワード「コエイロ」＋「止めて」「次の声」などのローカル音声操作。
-  - 拡張パック（DLC）& 実験機能
-      - レイテンシ・ガバナ、囁き検出モード、LAN内GPUを活用する分散推論、話者自動振り分け、Kokoro-82M
-        による音声合成（TTS）などを搭載。
+---
 
-🛠️ 動作要件
+## 🛠️ 動作要件
 
 | 項目             | 要件                                                                                                                              |
 | :------------- | :------------------------------------------------------------------------------------------------------------------------------ |
@@ -112,70 +127,76 @@ Linux の場合
 | **GPU**        | 不要（CPUのみで動作可能）。NVIDIA GPU（CUDA 12）搭載環境ではさらに高速動作                                                                                 |
 | **メモリ**        | 4GB 以上（AI推論ワーカープロセス実測: 約0.9GB）                                                                                                  |
 | **ストレージ**      | 8GB 以上の空き容量（モデル・仮想環境含む）                                                                                                         |
-| **外部ツール**      | **FFmpeg**（音声処理用）、**仮想オーディオデバイス**（VB-CABLE、VoiceMeeter 等）                                                                       |
+| **外部ツール**      | **FFmpeg**（音声処理用）、**git**・**uv**（ソースツリー版の初回セットアップで使用）、**仮想オーディオデバイス**（VB-CABLE、VoiceMeeter 等）                                           |
 | **Linux 追加依存** | `libportaudio2`, `portaudio19-dev`, `ffmpeg`, `libgl1`, `libegl1`, `libglib2.0-0`, `libxkbcommon0`, `libdbus-1-3`, `fontconfig` |
 
-🎙️ 仮想オーディオデバイスとの接続例（Discord / OBS）
+---
+
+## 🎙️ 仮想オーディオデバイスとの接続例（Discord / OBS）
 
 通話アプリや配信ソフトに変換後の声を出力するには、仮想オーディオドライバ（VB-CABLE 等）を利用します。
 
+```
 [物理マイク] ──> 【Koeiro 入力】 ──(AI変換)──> 【Koeiro 出力（CABLE Input）】
                                                         │
                                                         ▼
                                        【Discord / OBS 入力（CABLE Output）】
+```
 
-1.  Koeiro 側の設定:
-      - 入力デバイス：お使いのヘッドセット・マイク
-      - 出力デバイス：CABLE Input (VB-Audio Virtual Cable)
-2.  通話・配信ソフト側の設定:
-      - Discord / OBS などの音声入力デバイスに CABLE Output (VB-Audio Virtual Cable) を指定。
-      - ご自身の声を確認（モニター）したい場合は、Koeiro の「モニター出力」機能でお使いのヘッドホン・スピーカーを選択してください。
+1. Koeiro 側の設定:
+   - 入力デバイス: お使いのヘッドセット・マイク
+   - 出力デバイス: CABLE Input (VB-Audio Virtual Cable)
+2. 通話・配信ソフト側の設定:
+   - Discord / OBS などの音声入力デバイスに CABLE Output (VB-Audio Virtual Cable) を指定。
+   - ご自身の声を確認（モニター）したい場合は、Koeiro の「モニター出力」機能でお使いのヘッドホン・スピーカーを選択してください。
 
-🧪 ソースコードからの実行・開発
+---
 
-リポジトリをクローンして開発環境を構築する場合の手順です。
+## 🧪 ソースコードからの実行・開発
 
-# 1. リポジトリのクローン
+リポジトリをクローンして開発環境を構築する場合の手順です。初回セットアップのスクリプトが、GUI 用 `.venv` と AI ワーカー用 `vc_models/meanvc2/.venv` の作成、依存の導入、MeanVC2・LavaSR・環境音ゲートのモデル取得までをまとめて行います。
+
+```bash
+# 1. リポジトリのクローン（git と uv を使います）
 git clone https://github.com/heynegix/koeiro.git
 cd koeiro
 
-# 2. 仮想環境の作成と依存関係の導入 (Python 3.12)
-python -m venv .venv
+# 2. 初回セットアップ (Python 3.12)
+python3.12 tools/setup_release.py
+#   Windows: py -3.12 tools\setup_release.py
+#   uv が無い場合は先に: pip install uv
 
-# Windows の場合
-.\.venv\Scripts\activate
-# Linux の場合
-source .venv/bin/activate
+# 3. アプリケーションの起動
+.venv/bin/python app.py
+#   Windows: .\.venv\Scripts\python app.py
+```
 
-# 3. 依存ライブラリのインストール
-pip install -r requirements.txt
-pip install -r requirements-ai.txt
+実行される処理の一覧だけ確認したい場合は `python3.12 tools/setup_release.py --dry-run` が使えます。GPU（CUDA）経路の計測手順は `notes/kaggle_gpu_verification.md` にあります。
 
-# 4. アプリケーションの起動
-python app.py
+---
 
-❓ トラブルシューティング
+## ❓ トラブルシューティング
 
-  - CPUの性能に応じて変換モードを切り替えてみてください。低スペック環境では「一括変換 - 最速」が最も安定します。
-  - 「調整」引き出しのバッファサイズ設定（フレーム数）を見直すか、バックグラウンドで動作している高負荷なプロセスを終了してください。
+- CPUの性能に応じて変換モードを切り替えてみてください。低スペック環境では「一括変換 - 最速」が最も安定します。
+- 「調整」引き出しのバッファサイズ設定（フレーム数）を見直すか、バックグラウンドで動作している高負荷なプロセスを終了してください。
+- 「調整」引き出しの「配線」タブで、入力デバイスと出力デバイスが正しく割り当てられているか確認してください。
+- Windowsのサウンド設定で、マイクおよび仮想オーディオデバイスのサンプリングレートが 48000 Hz (48 kHz) に設定されているか確認してください。
+- 環境音（拍手・キーボード等）を通すかどうかは、「調整」の「環境音をそのまま通す」（既定 ON）で切り替えられます。咳・鼻すすりなど声まわりの音は環境音とみなさず変換されます。
+- PySide6（Qt）に必要な共有ライブラリが不足している可能性があります。以下が導入済みか確認してください:
+  ```bash
+  sudo apt install -y libgl1 libegl1 libglib2.0-0 libxkbcommon0 libdbus-1-3 fontconfig
+  ```
+- BOOTH配布のバイナリ単体にはモデル抽出スクリプトは含まれていません。自作ボイスの追加・特徴抽出を行う場合は、Python 3.12 / PyTorch 環境が整った開発環境（tools/ 配下のスクリプト）をご利用ください。
 
-  - 「調整」引き出しの「配線」タブで、入力デバイスと出力デバイスが正しく割り当てられているか確認してください。
-  - Windowsのサウンド設定で、マイクおよび仮想オーディオデバイスのサンプリングレートが 48000 Hz (48 kHz)
-    に設定されているか確認してください。
+---
 
-  - PySide6（Qt）に必要な共有ライブラリが不足している可能性があります。以下のパッケージが導入されているか確認してください：
-    sudo apt install -y libgl1 libegl1 libglib2.0-0 libxkbcommon0 libdbus-1-3 fontconfig
+## 📜 ライセンス & クレジット
 
-  - BOOTH配布のバイナリ単体にはモデル抽出スクリプトは含まれていません。自作ボイスの追加・特徴抽出を行う場合は、Python 3.12 /
-    PyTorch 環境が整った開発環境（tools/ 配下のスクリプト）をご利用ください。
+- Koeiro 本体: MIT License (c) 2026 Negix
+- MeanVC2: Apache-2.0 License (ASLP-lab)
+- LavaSR: Apache-2.0 License
+- GUI Framework: PySide6 (LGPLv3)
+- 詳細なサードパーティ製ライブラリおよび事前学習済みモデルのライセンスについては、THIRD_PARTY_NOTICES.md をご参照ください。
 
-📜 ライセンス & クレジット
-
-  - Koeiro 本体: MIT License (c) 2026 Negix
-  - MeanVC2: Apache-2.0 License (ASLP-lab)
-  - LavaSR: Apache-2.0 License
-  - GUI Framework: PySide6 (LGPLv3)
-  - 詳細なサードパーティ製ライブラリおよび事前学習済みモデルのライセンスについては、THIRD_PARTY_NOTICES.md をご参照ください。
-
-[!WARNING]
-第三者の音声を本人の許諾なく模倣・再現する行為、なりすまし、公序良俗に反する用途での使用は固く禁止します。倫理的な配慮のもとでご活用ください。
+> [!WARNING]
+> 第三者の音声を本人の許諾なく模倣・再現する行為、なりすまし、公序良俗に反する用途での使用は固く禁止します。倫理的な配慮のもとでご活用ください。
